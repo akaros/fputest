@@ -3,7 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <x86intrin.h>
-
+#include <getopt.h>
 
 /*
 
@@ -213,7 +213,7 @@ struct ancillary_state default_as;
 
 uint32_t edx = 0x0;
 uint32_t eax = 0x7;
-
+unsigned long long mask = 2; // avoid bit 0.
 char *mm0 = "|_MM:0_|";
 char *xmm0  = "|____XMM:00____|";
 char *hi_ymm1 = "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0|_YMM_Hi128:01_|";
@@ -323,7 +323,7 @@ void zero_as(struct ancillary_state *as)
 void reset_fp()
 {
 	//asm volatile("fninit");
-	__builtin_ia32_xrstor64(&as, 0xffffffffffffffff);
+	__builtin_ia32_xrstor64(&as, mask);
 }
 
 void print_intro()
@@ -408,12 +408,10 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 				}
 				
 				start = __rdtsc();
-#if 0
 				if (save == 1)
-					__builtin_ia32_xsave64(&default_as, 0xffffffffffffffff);
+					__builtin_ia32_xsave64(&default_as, mask);
 				else
-					__builtin_ia32_xsaveopt64(&default_as, 0xffffffffffffffff);
-#endif
+					__builtin_ia32_xsaveopt64(&default_as, mask);
 				end = __rdtsc();
 				save_res[iter] = end - start;
 				if (i == 4) {
@@ -421,7 +419,7 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 					dirty();
 				}
 				start = __rdtsc();
-				//__builtin_ia32_xrstor64(&as, 0xffffffffffffffff);
+				__builtin_ia32_xrstor64(&as, mask);
 				end = __rdtsc();
 				rstor_res[iter] = end - start;
 			}
@@ -430,7 +428,7 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 			printf("\n\n");
 		first = 0;
 		printf("#%s_xsave%s-%d-xsave%s\n", name, opt, i, opt);
-		//printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
+		printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
 		for (iter = 0; iter < n; ++iter)
 			printf("%d\t%ld\n", base + (i-2), save_res[iter] + rstor_res[i]);
 /*
@@ -450,21 +448,37 @@ struct test {
 	int index;
 	void (*dirty)(void);} tests[] = {
 	{"baseline", 1, nodirty},
-	{"x87", 1, dirty_x87},
+	{"x87", 2, dirty_x87},
 	{"xmm_x87", 3, dirty_xmm_x87},
-	{"xmm", 5, dirty_xmm},
-	{"hi_ymm", 8, dirty_hi_ymm},
-	{"hi_ymm_xmm", 14, dirty_hi_ymm_xmm},
-	{"hi_ymm_x87", 17, dirty_hi_ymm_x87},
-	{"hi_ymm_xmm_x87", 20, dirty_hi_ymm_xmm_x87},
-	{"all_data_reg", 23, dirty_all_data_reg}
+	{"xmm", 4, dirty_xmm},
+	{"hi_ymm", 5, dirty_hi_ymm},
+	{"hi_ymm_xmm", 6, dirty_hi_ymm_xmm},
+	{"hi_ymm_x87", 7, dirty_hi_ymm_x87},
+	{"hi_ymm_xmm_x87", 8, dirty_hi_ymm_xmm_x87},
+	{"all_data_reg", 9, dirty_all_data_reg}
 };
 int main(int argc, char *argv[])
 {
 	int i;
+    int opt= 0;
+    static struct option long_options[] = {
+        {"samples",      required_argument,       0,  's' },
+          {"savemask",      required_argument,       0,  'm' },
+      {0,           0,                 0,  0   }
+    };
 
-	if (argc > 1)
-		n = atoi(argv[1]);
+    int long_index =0;
+    while ((opt = getopt_long(argc, argv,"s:m:", 
+                   long_options, &long_index )) != -1) {
+        switch (opt) {
+             case 'm' : mask = strtol(optarg, 0, 0);
+                 break;
+             case 's' : n = atoi(optarg);
+                 break;
+             default: fprintf(stderr, "Usage: %s [-m savemask] [-s numsamples]\n", argv[0]);
+                 exit(1);
+        }
+    }
 
 	save_res = malloc(n * sizeof(uint64_t));
 	rstor_res = malloc(n * sizeof(uint64_t));
@@ -474,7 +488,7 @@ int main(int argc, char *argv[])
 	asm volatile ("fninit");
 	edx = 0x0;
 	eax = 0x1;
-	__builtin_ia32_xsave64(&default_as, 0xffffffffffffffff);
+	__builtin_ia32_xsave64(&default_as, mask);
 	default_as.fp_head_64d.mxcsr = 0x1f80;
 	eax = 0x7; // Set eax back to state components up to AVX
 
