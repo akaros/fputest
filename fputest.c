@@ -32,7 +32,35 @@ corresponds to the first test in "xrstor6464 tests that followed an xsasve64"
 and so forth.
 */
 
+static inline uint64_t
+rdtsc()
+{
+	uint32_t h, l;
 
+	asm volatile("cpuid;"
+	             "rdtsc;"
+	             "mov %%edx, %0;"
+	             "mov %%eax, %1" :
+	             "=r"(h), "=r"(l) ::
+	             "%rax", "%rbx", "%rcx", "%rdx");
+
+	return ((uint64_t)h << 32) | l;
+}
+
+static inline uint64_t
+rdtscp()
+{
+	uint32_t h, l;
+
+	asm volatile("rdtscp;"
+	             "mov %%edx, %0;"
+	             "mov %%eax, %1;"
+	             "cpuid" :
+	             "=r"(h), "=r"(l) ::
+	             "%rax", "%rbx", "%rcx", "%rdx");
+
+	return ((uint64_t)h << 32) | l;
+}
 
 /*
 SERIOUS TODO: We MUST pin this test to a single core, because the TSC clocks may
@@ -409,8 +437,8 @@ void tsc_test(void)
 	uint64_t end;
 	uint64_t sum = 0;
 	for (i = 0; i < n; ++i) {
-		start = __rdtsc();
-		end = __rdtsc();
+		start = rdtsc();
+		end = rdtscp();
 		sum += (end - start);
 	}
 
@@ -436,6 +464,7 @@ uint64_t *rstor_res;
 void nodirty(void)
 {
 }
+
 void programtest(char *name, char *opt, int base, void dirty(void), int save /* 1 == xsave, 2 == xsaveopt */)
 {
 	static int first = 1;
@@ -455,20 +484,20 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 					dirty();
 				}
 				
-				start = __rdtsc();
+				start = rdtsc();
 				if (save == 1)
 					__builtin_ia32_xsave64(&default_as, mask);
 				else
 					__builtin_ia32_xsaveopt64(&default_as, mask);
-				end = __rdtsc();
+				end = rdtscp();
 				save_res[iter] = end - start;
 				if (i == 4) {
 					reset_fp();
 					dirty();
 				}
-				start = __rdtsc();
+				start = rdtsc();
 				__builtin_ia32_xrstor64(&as, mask);
-				end = __rdtsc();
+				end = rdtscp();
 				rstor_res[iter] = end - start;
 			}
 		}
