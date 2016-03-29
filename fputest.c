@@ -1,9 +1,14 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <x86intrin.h>
 #include <getopt.h>
+#include <errno.h>
+#define __USE_GNU
+
+#include <sched.h>
 
 /*
 
@@ -244,6 +249,49 @@ char *ymm13 = "|____XMM:13____||_YMM_Hi128:13_|";
 char *ymm14 = "|____XMM:14____||_YMM_Hi128:14_|";
 char *ymm15 = "|____XMM:15____||_YMM_Hi128:15_|";
 
+int enable_speed_step(int cpu, int on)
+{
+    static const uint64_t ss_bit = (uint64_t) 1 << 32;
+    static const off_t perf_ctl_msr = 0x199;
+    int fd, status;
+    uint64_t val, xval;
+    char msrdev[256];
+
+    snprintf(msrdev, sizeof(msrdev), "/dev/cpu/%d/msr", cpu);
+    fd = open(msrdev, O_RDWR);
+    if (fd < 0) {
+        fprintf(stderr, "MSR device not available, leaving speed step as it was!\n");
+        return -1;
+    }
+    if (pread(fd, &val, sizeof(val), perf_ctl_msr) != sizeof(val)) {
+        fprintf(stderr, "Unable to read MSR device register 0x%lx: %s\n",
+                perf_ctl_msr, strerror(errno));
+        exit(2);
+    }
+    status = (val & ss_bit) ? 0 : 1;
+    if (status ^ (on != 0)) {
+        if (on)
+            val &= ~ss_bit;
+        else
+            val |= ss_bit;
+        if (pwrite(fd, &val, sizeof(val), perf_ctl_msr) != sizeof(val)) {
+            fprintf(stderr, "Unable to write MSR device: %s\n", strerror(errno));
+            exit(2);
+        }
+        if (pread(fd, &xval, sizeof(xval), perf_ctl_msr) != sizeof(xval)) {
+            fprintf(stderr, "Unable to read MSR device: %s\n", strerror(errno));
+            exit(2);
+        }
+        if (val != xval) {
+            fprintf(stderr, "Unable to write MSR device. "
+                    "Value 0x%lx did not stick at MSR 0x%lx!\n", val, perf_ctl_msr);
+            exit(2);
+        }
+    }
+    close(fd);
+
+    return status;
+}
 
 void dirty_all_data_reg() {
 
@@ -457,13 +505,24 @@ struct test {
 	{"hi_ymm_xmm_x87", 8, dirty_hi_ymm_xmm_x87},
 	{"all_data_reg", 9, dirty_all_data_reg}
 };
+
+int setup(int core) {
+	cpu_set_t my_set;
+	CPU_ZERO(&my_set);
+	CPU_SET(core, &my_set);
+	if (sched_setaffinity(0, sizeof(cpu_set_t), &my_set) < 0)
+		return -1;
+	enable_speed_step(core, 0);
+}
 int main(int argc, char *argv[])
 {
 	int i;
+	int core = 31;
     int opt= 0;
     static struct option long_options[] = {
         {"samples",      required_argument,       0,  's' },
           {"savemask",      required_argument,       0,  'm' },
+          {"core",      required_argument,       0,  'c' },
       {0,           0,                 0,  0   }
     };
 
@@ -471,6 +530,8 @@ int main(int argc, char *argv[])
     while ((opt = getopt_long(argc, argv,"s:m:", 
                    long_options, &long_index )) != -1) {
         switch (opt) {
+             case 'c' : core = strtol(optarg, 0, 0);
+                 break;
              case 'm' : mask = strtol(optarg, 0, 0);
                  break;
              case 's' : n = atoi(optarg);
@@ -480,6 +541,10 @@ int main(int argc, char *argv[])
         }
     }
 
+	if (setup(core) < 0) {
+		perror("setup");
+		exit(1);
+	}
 	save_res = malloc(n * sizeof(uint64_t));
 	rstor_res = malloc(n * sizeof(uint64_t));
 
@@ -496,7 +561,7 @@ int main(int argc, char *argv[])
 	// TODO: According to Agner, Intel has a performance
 	// counter called "core clock cycles", that is apparently
 	// the most accurate measure... should take a look at this.
-	for(i = i; i < sizeof(tests)/sizeof(tests[0]); i++) {
+	for(i = 0; i < sizeof(tests)/sizeof(tests[0]); i++) {
 		programtest(tests[i].name, "", tests[i].index, tests[i].dirty, 1);
 		programtest(tests[i].name, "opt", tests[i].index + 25, tests[i].dirty, 2);
 	}
