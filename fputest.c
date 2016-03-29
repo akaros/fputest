@@ -7,6 +7,7 @@
 #include <getopt.h>
 #include <errno.h>
 #define __USE_GNU
+#include <unistd.h>
 
 #include <sched.h>
 
@@ -542,6 +543,7 @@ int setup(int core) {
 	if (sched_setaffinity(0, sizeof(cpu_set_t), &my_set) < 0)
 		return -1;
 	enable_speed_step(core, 0);
+	return 0;
 }
 int main(int argc, char *argv[])
 {
@@ -595,5 +597,5 @@ int main(int argc, char *argv[])
 		programtest(tests[i].name, "opt", tests[i].index + 25, tests[i].dirty, 2);
 	}
 	printf("#PLEASE NOTE!: I'm not sure if my method here marks just YMM or both YMM and XMM as XINUSE!");
-
+	return 0;
 }

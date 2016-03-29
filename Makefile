@@ -16,12 +16,12 @@
 #     void __builtin_ia32_xsaveopt64 (void *, long long)
 #
 fputest: fputest.c
-	gcc -Ofast -mfxsr -mxsave -mxsaveopt -o fputest fputest.c
+	gcc -Wall -Werror -Ofast -mfxsr -mxsave -mxsaveopt -o fputest fputest.c
 
 gfputest: fputest.c
-	gcc -g -mfxsr -mxsave -mxsaveopt -o gfputest fputest.c
+	gcc -Wall -Werror -g -mfxsr -mxsave -mxsaveopt -o gfputest fputest.c
 
 akfputest: fputest.c
-	x86_64-ucb-akaros-gcc -Ofast -mfxsr -mxsave -mxsaveopt -o fputest fputest.c
+	x86_64-ucb-akaros-gcc -Wall -Werror -Ofast -mfxsr -mxsave -mxsaveopt -o fputest fputest.c
 
 all: fputest gfputest akfputest
