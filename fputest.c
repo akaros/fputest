@@ -536,15 +536,8 @@ struct test {
 	{"all_data_reg", 9, dirty_all_data_reg}
 };
 
-int setup(int core) {
-	cpu_set_t my_set;
-	CPU_ZERO(&my_set);
-	CPU_SET(core, &my_set);
-	if (sched_setaffinity(0, sizeof(cpu_set_t), &my_set) < 0)
-		return -1;
-	enable_speed_step(core, 0);
-	return 0;
-}
+int setup(int core);
+
 int main(int argc, char *argv[])
 {
 	int i;
@@ -576,6 +569,7 @@ int main(int argc, char *argv[])
 		perror("setup");
 		exit(1);
 	}
+	enable_speed_step(core, 0);
 	save_res = malloc(n * sizeof(uint64_t));
 	rstor_res = malloc(n * sizeof(uint64_t));
 
