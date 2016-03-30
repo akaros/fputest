@@ -539,7 +539,7 @@ int main(int argc, char *argv[])
     };
 
     int long_index =0;
-    while ((opt = getopt_long(argc, argv,"s:m:", 
+    while ((opt = getopt_long(argc, argv,"c:s:m:", 
                    long_options, &long_index )) != -1) {
         switch (opt) {
              case 'c' : core = strtol(optarg, 0, 0);
