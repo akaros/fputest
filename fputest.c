@@ -11,6 +11,8 @@
 
 #include <sched.h>
 
+void hexdump(char *banner, void *v, size_t length);
+
 /*
 
 This version of the test program rearranges the ids of the tests
@@ -34,31 +36,12 @@ and so forth.
 */
 
 static inline uint64_t
-rdtsc()
-{
-	uint32_t h, l;
-
-	asm volatile("cpuid;"
-	             "rdtsc;"
-	             "mov %%edx, %0;"
-	             "mov %%eax, %1" :
-	             "=r"(h), "=r"(l) ::
-	             "%rax", "%rbx", "%rcx", "%rdx");
-
-	return ((uint64_t)h << 32) | l;
-}
-
-static inline uint64_t
 rdtscp()
 {
 	uint32_t h, l;
 
-	asm volatile("rdtscp;"
-	             "mov %%edx, %0;"
-	             "mov %%eax, %1;"
-	             "cpuid" :
-	             "=r"(h), "=r"(l) ::
-	             "%rax", "%rbx", "%rcx", "%rdx");
+	asm volatile("rdtscp"
+	             :"=d"(h), "=a"(l) ::"%rcx");
 
 	return ((uint64_t)h << 32) | l;
 }
@@ -245,9 +228,8 @@ typedef struct ancillary_state {
 struct ancillary_state as;
 struct ancillary_state default_as;
 
-uint32_t edx = 0x0;
-uint32_t eax = 0x7;
-unsigned long long mask = 2; // avoid bit 0.
+unsigned long long mask = 7; // consider avoiding bit 0.
+
 char *mm0 = "|_MM:0_|";
 char *xmm0  = "|____XMM:00____|";
 char *hi_ymm1 = "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0|_YMM_Hi128:01_|";
@@ -438,7 +420,7 @@ void tsc_test(void)
 	uint64_t end;
 	uint64_t sum = 0;
 	for (i = 0; i < n; ++i) {
-		start = rdtsc();
+		start = rdtscp();
 		end = rdtscp();
 		sum += (end - start);
 	}
@@ -475,7 +457,7 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 	//for(i = 2; i < 5; i++) {
 	for(i = 2; i < 3; i++) {
 		for(j = 0; j < 2; j++) {
-			zero_as(&as);
+			//zero_as(&as);
 			reset_fp();
 			if (i == 2)
 				dirty();
@@ -485,7 +467,7 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 					dirty();
 				}
 				
-				start = rdtsc();
+				start = rdtscp();
 				if (save == 1)
 					__builtin_ia32_xsave64(&default_as, mask);
 				else
@@ -496,7 +478,7 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 					reset_fp();
 					dirty();
 				}
-				start = rdtsc();
+				start = rdtscp();
 				__builtin_ia32_xrstor64(&as, mask);
 				end = rdtscp();
 				rstor_res[iter] = end - start;
@@ -506,7 +488,11 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 			printf("\n\n");
 		first = 0;
 		printf("#%s_xsave%s-%d-xsave%s\n", name, opt, i, opt);
-		printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
+		// leave off until we figure out how to make it work.
+		// in principle:
+		// plot "out" using xticlabels and some other shit but ...
+		// can't get it.
+		//printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
 		for (iter = 0; iter < n; ++iter)
 			printf("%d\t%ld\n", base + (i-2), save_res[iter] + rstor_res[i]);
 /*
@@ -526,6 +512,7 @@ struct test {
 	int index;
 	void (*dirty)(void);} tests[] = {
 	{"baseline", 1, nodirty},
+/*
 	{"x87", 2, dirty_x87},
 	{"xmm_x87", 3, dirty_xmm_x87},
 	{"xmm", 4, dirty_xmm},
@@ -534,6 +521,7 @@ struct test {
 	{"hi_ymm_x87", 7, dirty_hi_ymm_x87},
 	{"hi_ymm_xmm_x87", 8, dirty_hi_ymm_xmm_x87},
 	{"all_data_reg", 9, dirty_all_data_reg}
+ */
 };
 
 int setup(int core);
@@ -574,14 +562,14 @@ int main(int argc, char *argv[])
 	rstor_res = malloc(n * sizeof(uint64_t));
 
 	// Set up a default extended state that we can use for resets
-	memset(&default_as, 0x00, sizeof(struct ancillary_state));
+	hexdump("At start", &default_as, sizeof(default_as));
 	asm volatile ("fninit");
-	edx = 0x0;
-	eax = 0x1;
-	__builtin_ia32_xsave64(&default_as, mask);
-	default_as.fp_head_64d.mxcsr = 0x1f80;
-	eax = 0x7; // Set eax back to state components up to AVX
+	__builtin_ia32_xsave64(&default_as, mask /*mike had 1 here? */);
+	hexdump("fninit and xsave", &default_as, sizeof(default_as));
 
+	default_as.fp_head_64d.mxcsr = 0x1f80;
+	__builtin_ia32_xsave64(&default_as, mask /*mike had 1 here? */);
+	hexdump(" .. and setting mxcsr", &default_as, sizeof(default_as));
 
 	// TODO: According to Agner, Intel has a performance
 	// counter called "core clock cycles", that is apparently
