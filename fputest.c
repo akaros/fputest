@@ -449,7 +449,6 @@ void nodirty(void)
 /* do everything BUT xsave/xrestore. */
 void baseline(char *name, char *opt, int base, void dirty(void), int save /* 1 == xsave, 2 == xsaveopt */)
 {
-	static int first = 1;
 	int i, j, iter;
 	uint64_t start;
 	uint64_t end;
@@ -485,10 +484,7 @@ void baseline(char *name, char *opt, int base, void dirty(void), int save /* 1 =
 				rstor_res[iter] = end - start;
 			}
 		}
-		if (! first)
-			printf("\n\n");
-		first = 0;
-		printf("#%s_xsave%s-%d-xsave%s\n", name, opt, i, opt);
+		printf("# %s_xsave%s-%d-xsave%s\n", name, opt, i, opt);
 		// leave off until we figure out how to make it work.
 		// in principle:
 		// plot "out" using xticlabels and some other shit but ...
@@ -496,25 +492,21 @@ void baseline(char *name, char *opt, int base, void dirty(void), int save /* 1 =
 		//printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
 #if 0
 		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld\n", base + (i-2), save_res[iter] + rstor_res[i]);
+			printf("%d\t%ld %s_xsave%s-%d-xsave%s\n", base + (i-2), save_res[iter] + rstor_res[i], name, opt, i););
 #else
 		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld\n", base + (i-2), save_res[iter]);
-
-		printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
-		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld\n", base + (i-2), save_res[iter]);
+			printf("%d\t%ld %s_xsave%s-%d-xsave\n", base + (i-2), save_res[iter], name, opt, i);
 		printf("\n\n");
-		printf("#%s_xsave%s-%d-xrstor64\n", name, opt, i);
+		printf("# %s_xsave%s-%d-xrstor64\n", name, opt, i);
 		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld\n", base + (i-2) + 50, rstor_res[iter]);
+			printf("%d\t%ld %s_xsave%s-%d-xrstor64\n", base + (i-2) + 50, rstor_res[iter], name, opt, i);
+		printf("\n\n");
 #endif
 	}
 }
 
 void programtest(char *name, char *opt, int base, void dirty(void), int save /* 1 == xsave, 2 == xsaveopt */)
 {
-	static int first = 1;
 	int i, j, iter;
 	uint64_t start;
 	uint64_t end;
@@ -548,28 +540,24 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 				rstor_res[iter] = end - start;
 			}
 		}
-		if (! first)
-			printf("\n\n");
-		first = 0;
-		printf("#%s_xsave%s-%d-xsave%s\n", name, opt, i, opt);
 		// leave off until we figure out how to make it work.
 		// in principle:
 		// plot "out" using xticlabels and some other shit but ...
 		// can't get it.
 		//printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
 #if 0
+		printf("#%s_xsave%s-%d-xsave%s\n", name, opt, i, opt);
 		for (iter = 0; iter < n; ++iter)
 			printf("%d\t%ld\n", base + (i-2), save_res[iter] + rstor_res[i]);
 #else
+		printf("#%s_xsave%s-%d-xsave%s\n", name, opt, i, opt);
 		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld\n", base + (i-2), save_res[iter] );
-		printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
-		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld\n", base + (i-2), save_res[iter]);
+			printf("%d\t%ld\t %s_xsave%s-%d\n", base + (i-2), save_res[iter], name, opt, i );
 		printf("\n\n");
-		printf("#%s_xsave%s-%d-xrstor64\n", name, opt, i);
+		printf("#%s_xsave%s-%d-xrstor\n", name, opt, i);
 		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld\n", base + (i-2) + 50, rstor_res[iter]);
+			printf("%d\t%ld %s_xsave%s-%d-xrstor\n", base + (i-2) + 50, rstor_res[iter], name, opt, i);
+		printf("\n\n");
 #endif
 	}
 }
@@ -578,15 +566,15 @@ struct test {
 	char *name;
 	int index;
 	void (*dirty)(void);} tests[] = {
-	{"baseline", 1, nodirty},
-	{"x87", 2, dirty_x87},
-	{"xmm_x87", 3, dirty_xmm_x87},
-	{"xmm", 4, dirty_xmm},
-	{"hi_ymm", 5, dirty_hi_ymm},
-	{"hi_ymm_xmm", 6, dirty_hi_ymm_xmm},
-	{"hi_ymm_x87", 7, dirty_hi_ymm_x87},
-	{"hi_ymm_xmm_x87", 8, dirty_hi_ymm_xmm_x87},
-	{"all_data_reg", 9, dirty_all_data_reg}
+	{"baseline", 2, nodirty},
+	{"x87", 4, dirty_x87},
+	{"xmm_x87", 6, dirty_xmm_x87},
+	{"xmm", 8, dirty_xmm},
+	{"hi_ymm", 10, dirty_hi_ymm},
+	{"hi_ymm_xmm", 12, dirty_hi_ymm_xmm},
+	{"hi_ymm_x87", 14, dirty_hi_ymm_x87},
+	{"hi_ymm_xmm_x87", 16, dirty_hi_ymm_xmm_x87},
+	{"all_data_reg", 18, dirty_all_data_reg}
 };
 
 int setup(int core);
@@ -627,16 +615,19 @@ int main(int argc, char *argv[])
 	rstor_res = malloc(n * sizeof(uint64_t));
 
 	// Set up a default extended state that we can use for resets
-	hexdump("At start", &default_as, sizeof(default_as));
+	//hexdump("At start", &default_as, sizeof(default_as));
 	asm volatile ("fninit");
 	__builtin_ia32_xsave64(&default_as, 1);
-	hexdump("fninit and xsave", &default_as, sizeof(default_as));
+	//hexdump("fninit and xsave", &default_as, sizeof(default_as));
 
 	default_as.fp_head_64d.mxcsr = 0x1f80;
 
 	// TODO: According to Agner, Intel has a performance
 	// counter called "core clock cycles", that is apparently
 	// the most accurate measure... should take a look at this.
+	printf("# gnuplot> set xtic rotate\n");
+	printf("# plot \"whateverfileyoudid>to\" using 1:2:xtic(3)\n");
+
 	baseline("noFPU", "", 0, nodirty, 1);
 	for(i = 0; i < sizeof(tests)/sizeof(tests[0]); i++) {
 		programtest(tests[i].name, "", tests[i].index, tests[i].dirty, 1);
