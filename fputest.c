@@ -380,7 +380,7 @@ void zero_as(struct ancillary_state *as)
 void reset_fp()
 {
 	//asm volatile("fninit");
-	__builtin_ia32_xrstor64(&as, mask);
+	__builtin_ia32_xrstor64(&default_as, mask);
 }
 
 void print_intro()
@@ -469,9 +469,9 @@ void baseline(char *name, char *opt, int base, void dirty(void), int save /* 1 =
 				start = cycles();
 /*
 				if (save == 1)
-					__builtin_ia32_xsave64(&default_as, mask);
+					__builtin_ia32_xsave64(&as, mask);
 				else
-					__builtin_ia32_xsaveopt64(&default_as, mask);
+					__builtin_ia32_xsaveopt64(&as, mask);
  */
 				end = cycles();
 				save_res[iter] = end - start;
@@ -494,9 +494,13 @@ void baseline(char *name, char *opt, int base, void dirty(void), int save /* 1 =
 		// plot "out" using xticlabels and some other shit but ...
 		// can't get it.
 		//printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
+#if 0
 		for (iter = 0; iter < n; ++iter)
 			printf("%d\t%ld\n", base + (i-2), save_res[iter] + rstor_res[i]);
-/*
+#else
+		for (iter = 0; iter < n; ++iter)
+			printf("%d\t%ld\n", base + (i-2), save_res[iter]);
+
 		printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
 		for (iter = 0; iter < n; ++iter)
 			printf("%d\t%ld\n", base + (i-2), save_res[iter]);
@@ -504,7 +508,7 @@ void baseline(char *name, char *opt, int base, void dirty(void), int save /* 1 =
 		printf("#%s_xsave%s-%d-xrstor64\n", name, opt, i);
 		for (iter = 0; iter < n; ++iter)
 			printf("%d\t%ld\n", base + (i-2) + 50, rstor_res[iter]);
- */
+#endif
 	}
 }
 
@@ -529,9 +533,9 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 				
 				start = cycles();
 				if (save == 1)
-					__builtin_ia32_xsave64(&default_as, mask);
+					__builtin_ia32_xsave64(&as, mask);
 				else
-					__builtin_ia32_xsaveopt64(&default_as, mask);
+					__builtin_ia32_xsaveopt64(&as, mask);
 				end = cycles();
 				save_res[iter] = end - start;
 				if (i == 4) {
@@ -553,9 +557,12 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 		// plot "out" using xticlabels and some other shit but ...
 		// can't get it.
 		//printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
+#if 0
 		for (iter = 0; iter < n; ++iter)
 			printf("%d\t%ld\n", base + (i-2), save_res[iter] + rstor_res[i]);
-/*
+#else
+		for (iter = 0; iter < n; ++iter)
+			printf("%d\t%ld\n", base + (i-2), save_res[iter] );
 		printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
 		for (iter = 0; iter < n; ++iter)
 			printf("%d\t%ld\n", base + (i-2), save_res[iter]);
@@ -563,7 +570,7 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 		printf("#%s_xsave%s-%d-xrstor64\n", name, opt, i);
 		for (iter = 0; iter < n; ++iter)
 			printf("%d\t%ld\n", base + (i-2) + 50, rstor_res[iter]);
- */
+#endif
 	}
 }
 
@@ -622,12 +629,10 @@ int main(int argc, char *argv[])
 	// Set up a default extended state that we can use for resets
 	hexdump("At start", &default_as, sizeof(default_as));
 	asm volatile ("fninit");
-	__builtin_ia32_xsave64(&default_as, mask /*mike had 1 here? */);
+	__builtin_ia32_xsave64(&default_as, 1);
 	hexdump("fninit and xsave", &default_as, sizeof(default_as));
 
 	default_as.fp_head_64d.mxcsr = 0x1f80;
-	__builtin_ia32_xsave64(&default_as, mask /*mike had 1 here? */);
-	hexdump(" .. and setting mxcsr", &default_as, sizeof(default_as));
 
 	// TODO: According to Agner, Intel has a performance
 	// counter called "core clock cycles", that is apparently
