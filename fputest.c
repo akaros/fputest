@@ -457,7 +457,7 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 	//for(i = 2; i < 5; i++) {
 	for(i = 2; i < 3; i++) {
 		for(j = 0; j < 2; j++) {
-			//zero_as(&as);
+			zero_as(&as);
 			reset_fp();
 			if (i == 2)
 				dirty();
@@ -512,7 +512,6 @@ struct test {
 	int index;
 	void (*dirty)(void);} tests[] = {
 	{"baseline", 1, nodirty},
-/*
 	{"x87", 2, dirty_x87},
 	{"xmm_x87", 3, dirty_xmm_x87},
 	{"xmm", 4, dirty_xmm},
@@ -521,7 +520,6 @@ struct test {
 	{"hi_ymm_x87", 7, dirty_hi_ymm_x87},
 	{"hi_ymm_xmm_x87", 8, dirty_hi_ymm_xmm_x87},
 	{"all_data_reg", 9, dirty_all_data_reg}
- */
 };
 
 int setup(int core);
