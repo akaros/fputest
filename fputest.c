@@ -448,6 +448,68 @@ void nodirty(void)
 {
 }
 
+/* do everything BUT xsave/xrestore. */
+void baseline(char *name, char *opt, int base, void dirty(void), int save /* 1 == xsave, 2 == xsaveopt */)
+{
+	static int first = 1;
+	int i, j, iter;
+	uint64_t start;
+	uint64_t end;
+	//for(i = 2; i < 5; i++) {
+	for(i = 2; i < 3; i++) {
+		for(j = 0; j < 2; j++) {
+			zero_as(&as);
+			reset_fp();
+			if (i == 2)
+				dirty();
+			for (iter = 0; iter < n; iter++) {
+				if (i == 3) {
+					reset_fp();
+					dirty();
+				}
+				
+				start = rdtscp();
+/*
+				if (save == 1)
+					__builtin_ia32_xsave64(&default_as, mask);
+				else
+					__builtin_ia32_xsaveopt64(&default_as, mask);
+ */
+				end = rdtscp();
+				save_res[iter] = end - start;
+				if (i == 4) {
+					reset_fp();
+					dirty();
+				}
+				start = rdtscp();
+				//__builtin_ia32_xrstor64(&as, mask);
+				end = rdtscp();
+				rstor_res[iter] = end - start;
+			}
+		}
+		if (! first)
+			printf("\n\n");
+		first = 0;
+		printf("#%s_xsave%s-%d-xsave%s\n", name, opt, i, opt);
+		// leave off until we figure out how to make it work.
+		// in principle:
+		// plot "out" using xticlabels and some other shit but ...
+		// can't get it.
+		//printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
+		for (iter = 0; iter < n; ++iter)
+			printf("%d\t%ld\n", base + (i-2), save_res[iter] + rstor_res[i]);
+/*
+		printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
+		for (iter = 0; iter < n; ++iter)
+			printf("%d\t%ld\n", base + (i-2), save_res[iter]);
+		printf("\n\n");
+		printf("#%s_xsave%s-%d-xrstor64\n", name, opt, i);
+		for (iter = 0; iter < n; ++iter)
+			printf("%d\t%ld\n", base + (i-2) + 50, rstor_res[iter]);
+ */
+	}
+}
+
 void programtest(char *name, char *opt, int base, void dirty(void), int save /* 1 == xsave, 2 == xsaveopt */)
 {
 	static int first = 1;
@@ -572,6 +634,7 @@ int main(int argc, char *argv[])
 	// TODO: According to Agner, Intel has a performance
 	// counter called "core clock cycles", that is apparently
 	// the most accurate measure... should take a look at this.
+	baseline("noFPU", "", 0, nodirty, 1);
 	for(i = 0; i < sizeof(tests)/sizeof(tests[0]); i++) {
 		programtest(tests[i].name, "", tests[i].index, tests[i].dirty, 1);
 		programtest(tests[i].name, "opt", tests[i].index + 25, tests[i].dirty, 2);
