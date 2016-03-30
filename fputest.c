@@ -412,7 +412,7 @@ void print_test_result(char * name, double result)
 	printf("%s %g\n", name, result);
 }
 
-int n = 1000000;
+int n = 32;
 void tsc_test(void)
 {
 	uint64_t i;
