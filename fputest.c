@@ -258,7 +258,7 @@ char *ymm13 = "|____XMM:13____||_YMM_Hi128:13_|";
 char *ymm14 = "|____XMM:14____||_YMM_Hi128:14_|";
 char *ymm15 = "|____XMM:15____||_YMM_Hi128:15_|";
 
-int enable_speed_step(int cpu, int on)
+void enable_speed_step(int cpu, int on)
 {
     static const uint64_t ss_bit = (uint64_t) 1 << 32;
     static const off_t perf_ctl_msr = 0x199;
@@ -270,12 +270,12 @@ int enable_speed_step(int cpu, int on)
     fd = open(msrdev, O_RDWR);
     if (fd < 0) {
         fprintf(stderr, "MSR device not available, leaving speed step as it was!\n");
-        return -1;
+        return;
     }
     if (pread(fd, &val, sizeof(val), perf_ctl_msr) != sizeof(val)) {
         fprintf(stderr, "Unable to read MSR device register 0x%lx: %s\n",
                 perf_ctl_msr, strerror(errno));
-        exit(2);
+        return;
     }
     status = (val & ss_bit) ? 0 : 1;
     if (status ^ (on != 0)) {
@@ -285,21 +285,21 @@ int enable_speed_step(int cpu, int on)
             val |= ss_bit;
         if (pwrite(fd, &val, sizeof(val), perf_ctl_msr) != sizeof(val)) {
             fprintf(stderr, "Unable to write MSR device: %s\n", strerror(errno));
-            exit(2);
+            return;
         }
         if (pread(fd, &xval, sizeof(xval), perf_ctl_msr) != sizeof(xval)) {
             fprintf(stderr, "Unable to read MSR device: %s\n", strerror(errno));
-            exit(2);
+            return;
         }
         if (val != xval) {
             fprintf(stderr, "Unable to write MSR device. "
                     "Value 0x%lx did not stick at MSR 0x%lx!\n", val, perf_ctl_msr);
-            exit(2);
+            return;
         }
     }
     close(fd);
 
-    return status;
+    return;
 }
 
 void dirty_all_data_reg() {
