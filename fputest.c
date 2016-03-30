@@ -35,15 +35,13 @@ corresponds to the first test in "xrstor6464 tests that followed an xsasve64"
 and so forth.
 */
 
-static inline uint64_t
-rdtscp()
-{
-	uint32_t h, l;
 
-	asm volatile("rdtscp"
-	             :"=d"(h), "=a"(l) ::"%rcx");
+static inline uint64_t cycles(){
+    unsigned int a=0, d=0;
 
-	return ((uint64_t)h << 32) | l;
+    int ecx=(1<<30)+1; //What counter it selects
+    __asm __volatile("rdpmc" : "=a"(a), "=d"(d) : "c"(ecx));
+    return ((uint64_t)a) | (((uint64_t)d) << 32);
 }
 
 /*
@@ -420,8 +418,8 @@ void tsc_test(void)
 	uint64_t end;
 	uint64_t sum = 0;
 	for (i = 0; i < n; ++i) {
-		start = rdtscp();
-		end = rdtscp();
+		start = cycles();
+		end = cycles();
 		sum += (end - start);
 	}
 
@@ -468,22 +466,22 @@ void baseline(char *name, char *opt, int base, void dirty(void), int save /* 1 =
 					dirty();
 				}
 				
-				start = rdtscp();
+				start = cycles();
 /*
 				if (save == 1)
 					__builtin_ia32_xsave64(&default_as, mask);
 				else
 					__builtin_ia32_xsaveopt64(&default_as, mask);
  */
-				end = rdtscp();
+				end = cycles();
 				save_res[iter] = end - start;
 				if (i == 4) {
 					reset_fp();
 					dirty();
 				}
-				start = rdtscp();
+				start = cycles();
 				//__builtin_ia32_xrstor64(&as, mask);
-				end = rdtscp();
+				end = cycles();
 				rstor_res[iter] = end - start;
 			}
 		}
@@ -529,20 +527,20 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 					dirty();
 				}
 				
-				start = rdtscp();
+				start = cycles();
 				if (save == 1)
 					__builtin_ia32_xsave64(&default_as, mask);
 				else
 					__builtin_ia32_xsaveopt64(&default_as, mask);
-				end = rdtscp();
+				end = cycles();
 				save_res[iter] = end - start;
 				if (i == 4) {
 					reset_fp();
 					dirty();
 				}
-				start = rdtscp();
+				start = cycles();
 				__builtin_ia32_xrstor64(&as, mask);
-				end = rdtscp();
+				end = cycles();
 				rstor_res[iter] = end - start;
 			}
 		}
