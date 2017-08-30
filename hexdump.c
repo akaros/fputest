@@ -20,8 +20,8 @@
  * MA 02111-1307 USA
  */
 
-#include <stdio.h>
 #include <stdint.h>
+#include <stdio.h>
 
 static int isprint(int c)
 {
@@ -32,13 +32,13 @@ void hexdump(char *banner, void *v, int length)
 {
 	int i;
 	uint8_t *m = v;
-	uintptr_t memory = (uintptr_t) v;
+	uintptr_t memory = (uintptr_t)v;
 	int all_zero = 0;
 
-	for(i = 0; i < 20; i++)
+	for (i = 0; i < 20; i++)
 		printf("#");
 	printf(" %s ", banner);
-	for(i = 0; i < 20; i++)
+	for (i = 0; i < 20; i++)
 		printf("#");
 	printf("\n");
 
@@ -65,11 +65,10 @@ void hexdump(char *banner, void *v, int length)
 			printf("...\n");
 		}
 	}
-	for(i = 0; i < 20; i++)
+	for (i = 0; i < 20; i++)
 		printf("#");
 	printf(" %s ", banner);
-	for(i = 0; i < 20; i++)
+	for (i = 0; i < 20; i++)
 		printf("#");
 	printf("\n");
 }
-

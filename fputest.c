@@ -1,11 +1,11 @@
-#include <stdlib.h>
-#include <stdint.h>
-#include <string.h>
-#include <fcntl.h>
-#include <stdio.h>
-#include <x86intrin.h>
-#include <getopt.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <getopt.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <x86intrin.h>
 #define __USE_GNU
 #include <unistd.h>
 
@@ -35,19 +35,19 @@ corresponds to the first test in "xrstor6464 tests that followed an xsasve64"
 and so forth.
 */
 
+static inline uint64_t cycles()
+{
+	unsigned int a = 0, d = 0;
 
-static inline uint64_t cycles(){
-    unsigned int a=0, d=0;
-
-    int ecx=(1<<30)+1; //What counter it selects
-    __asm __volatile("rdpmc" : "=a"(a), "=d"(d) : "c"(ecx));
-    return ((uint64_t)a) | (((uint64_t)d) << 32);
+	int ecx = (1 << 30) + 1; // What counter it selects
+	__asm __volatile("rdpmc" : "=a"(a), "=d"(d) : "c"(ecx));
+	return ((uint64_t)a) | (((uint64_t)d) << 32);
 }
 
 /*
 SERIOUS TODO: We MUST pin this test to a single core, because the TSC clocks may
-              not be synchronized between cores! If the process is migrated, then
-              the count could be wrong.
+              not be synchronized between cores! If the process is migrated,
+then the count could be wrong.
 
 
 Tests the performance of xsave64 vs xsaveopt64
@@ -62,64 +62,64 @@ There four kinds of tests:
 1. Baseline tells us difference for init optimization
 
 2. Dirtying outside the loop tells us difference
-	for modified optimization
+    for modified optimization
 
 3. Dirtying at top of loop gives us a spectrum for
-	xsaveopt64 with different amounts of state changed
+    xsaveopt64 with different amounts of state changed
 
 4. Dirtying between save and restore tells us cost
-	 of ext state use in vcore context (these tests
-	 should be compared to baseline, as they will
-	 use the init optimization)
+     of ext state use in vcore context (these tests
+     should be compared to baseline, as they will
+     use the init optimization)
 */
 
 // ------------------------------------------------------------
 // We treat the ancillary state the same as Akaros:
 // ------------------------------------------------------------
 struct fp_header_non_64bit {
-	uint16_t		fcw;
-	uint16_t		fsw;
-	uint8_t			ftw;
-	uint8_t			padding0;
-	uint16_t		fop;
-	uint32_t		fpu_ip;
-	uint16_t		cs;
-	uint16_t		padding1;
-	uint32_t		fpu_dp;
-	uint16_t		ds;
-	uint16_t		padding2;
-	uint32_t		mxcsr;
-	uint32_t		mxcsr_mask;
+	uint16_t fcw;
+	uint16_t fsw;
+	uint8_t ftw;
+	uint8_t padding0;
+	uint16_t fop;
+	uint32_t fpu_ip;
+	uint16_t cs;
+	uint16_t padding1;
+	uint32_t fpu_dp;
+	uint16_t ds;
+	uint16_t padding2;
+	uint32_t mxcsr;
+	uint32_t mxcsr_mask;
 };
 
 /* Header for the 64-bit mode FXSAVE map with promoted operand size */
 struct fp_header_64bit_promoted {
-	uint16_t		fcw;
-	uint16_t		fsw;
-	uint8_t			ftw;
-	uint8_t			padding0;
-	uint16_t		fop;
-	uint64_t		fpu_ip;
-	uint64_t		fpu_dp;
-	uint32_t		mxcsr;
-	uint32_t		mxcsr_mask;
+	uint16_t fcw;
+	uint16_t fsw;
+	uint8_t ftw;
+	uint8_t padding0;
+	uint16_t fop;
+	uint64_t fpu_ip;
+	uint64_t fpu_dp;
+	uint32_t mxcsr;
+	uint32_t mxcsr_mask;
 };
 
 /* Header for the 64-bit mode FXSAVE map with default operand size */
 struct fp_header_64bit_default {
-	uint16_t		fcw;
-	uint16_t		fsw;
-	uint8_t			ftw;
-	uint8_t			padding0;
-	uint16_t		fop;
-	uint32_t		fpu_ip;
-	uint16_t		cs;
-	uint16_t		padding1;
-	uint32_t		fpu_dp;
-	uint16_t		ds;
-	uint16_t		padding2;
-	uint32_t		mxcsr;
-	uint32_t		mxcsr_mask;
+	uint16_t fcw;
+	uint16_t fsw;
+	uint8_t ftw;
+	uint8_t padding0;
+	uint16_t fop;
+	uint32_t fpu_ip;
+	uint16_t cs;
+	uint16_t padding1;
+	uint32_t fpu_dp;
+	uint16_t ds;
+	uint16_t padding2;
+	uint32_t mxcsr;
+	uint32_t mxcsr_mask;
 };
 
 /* Just for storage space, not for real use	*/
@@ -145,44 +145,44 @@ typedef struct {
 typedef struct ancillary_state {
 	/* Legacy region of the XSAVE area */
 	union { /* whichever header used depends on the mode */
-		struct fp_header_non_64bit			fp_head_n64;
-		struct fp_header_64bit_promoted		fp_head_64p;
-		struct fp_header_64bit_default		fp_head_64d;
+		struct fp_header_non_64bit fp_head_n64;
+		struct fp_header_64bit_promoted fp_head_64p;
+		struct fp_header_64bit_default fp_head_64d;
 	};
 	/* offset 32 bytes */
-	__128bits		st0_mm0;	/* 128 bits: 80 for the st0, 48 reserved */
-	__128bits		st1_mm1;
-	__128bits		st2_mm2;
-	__128bits		st3_mm3;
-	__128bits		st4_mm4;
-	__128bits		st5_mm5;
-	__128bits		st6_mm6;
-	__128bits		st7_mm7;
+	__128bits st0_mm0; /* 128 bits: 80 for the st0, 48 reserved */
+	__128bits st1_mm1;
+	__128bits st2_mm2;
+	__128bits st3_mm3;
+	__128bits st4_mm4;
+	__128bits st5_mm5;
+	__128bits st6_mm6;
+	__128bits st7_mm7;
 	/* offset 160 bytes */
-	__128bits		xmm0;
-	__128bits		xmm1;
-	__128bits		xmm2;
-	__128bits		xmm3;
-	__128bits		xmm4;
-	__128bits		xmm5;
-	__128bits		xmm6;
-	__128bits		xmm7;
+	__128bits xmm0;
+	__128bits xmm1;
+	__128bits xmm2;
+	__128bits xmm3;
+	__128bits xmm4;
+	__128bits xmm5;
+	__128bits xmm6;
+	__128bits xmm7;
 	/* xmm8-xmm15 are only available in 64-bit-mode */
-	__128bits		xmm8;
-	__128bits		xmm9;
-	__128bits		xmm10;
-	__128bits		xmm11;
-	__128bits		xmm12;
-	__128bits		xmm13;
-	__128bits		xmm14;
-	__128bits		xmm15;
+	__128bits xmm8;
+	__128bits xmm9;
+	__128bits xmm10;
+	__128bits xmm11;
+	__128bits xmm12;
+	__128bits xmm13;
+	__128bits xmm14;
+	__128bits xmm15;
 	/* offset 416 bytes */
-	__128bits		reserv0;
-	__128bits		reserv1;
-	__128bits		reserv2;
-	__128bits		reserv3;
-	__128bits		reserv4;
-	__128bits		reserv5;
+	__128bits reserv0;
+	__128bits reserv1;
+	__128bits reserv2;
+	__128bits reserv3;
+	__128bits reserv4;
+	__128bits reserv5;
 	/* offset 512 bytes */
 
 	/*
@@ -191,14 +191,14 @@ typedef struct ancillary_state {
 	 */
 
 	// xstate_bv identifies the state components in the XSAVE area
-	uint64_t		xstate_bv;
+	uint64_t xstate_bv;
 	/*
 	 *	xcomp_bv[bit 63] is 1 if the compacted format is used, else 0.
 	 *	All bits in xcomp_bv should be 0 if the processor does not support the
 	 *	compaction extensions to the XSAVE feature set.
-	*/
-	uint64_t		xcomp_bv;
-	__128bits		reserv6;
+	 */
+	uint64_t xcomp_bv;
+	__128bits reserv6;
 
 	/* offset 576 bytes */
 	/*
@@ -209,15 +209,14 @@ typedef struct ancillary_state {
 	 *	If you need more, please ask!
 	 *	See the Intel Architecture Instruction Set Extensions Programming
 	 *	Reference page 3-3 for detailed offsets in this region.
-	*/
-	uint8_t			extended_region[2112];
+	 */
+	uint8_t extended_region[2112];
 
 	/* ancillary state  */
 } __attribute__((aligned(64))) ancillary_state_t;
 // ------------------------------------------------------------
 // End Akaros-specific stuff
 // ------------------------------------------------------------
-
 
 #define XSAVE "xsave"
 #define XSAVEOPT "xsaveopt"
@@ -229,7 +228,7 @@ struct ancillary_state default_as;
 unsigned long long mask = 7; // consider avoiding bit 0.
 
 char *mm0 = "|_MM:0_|";
-char *xmm0  = "|____XMM:00____|";
+char *xmm0 = "|____XMM:00____|";
 char *hi_ymm1 = "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0|_YMM_Hi128:01_|";
 
 char *mm1 = "|_MM:1_|";
@@ -241,16 +240,16 @@ char *mm6 = "|_MM:6_|";
 char *mm7 = "|_MM:7_|";
 
 // Each of these strings is 32 bytes long, excluding the terminating \0.
-char *ymm0  = "|____XMM:00____||_YMM_Hi128:00_|";
-char *ymm1  = "|____XMM:01____||_YMM_Hi128:01_|";
-char *ymm2  = "|____XMM:02____||_YMM_Hi128:02_|";
-char *ymm3  = "|____XMM:03____||_YMM_Hi128:03_|";
-char *ymm4  = "|____XMM:04____||_YMM_Hi128:04_|";
-char *ymm5  = "|____XMM:05____||_YMM_Hi128:05_|";
-char *ymm6  = "|____XMM:06____||_YMM_Hi128:06_|";
-char *ymm7  = "|____XMM:07____||_YMM_Hi128:07_|";
-char *ymm8  = "|____XMM:08____||_YMM_Hi128:08_|";
-char *ymm9  = "|____XMM:09____||_YMM_Hi128:09_|";
+char *ymm0 = "|____XMM:00____||_YMM_Hi128:00_|";
+char *ymm1 = "|____XMM:01____||_YMM_Hi128:01_|";
+char *ymm2 = "|____XMM:02____||_YMM_Hi128:02_|";
+char *ymm3 = "|____XMM:03____||_YMM_Hi128:03_|";
+char *ymm4 = "|____XMM:04____||_YMM_Hi128:04_|";
+char *ymm5 = "|____XMM:05____||_YMM_Hi128:05_|";
+char *ymm6 = "|____XMM:06____||_YMM_Hi128:06_|";
+char *ymm7 = "|____XMM:07____||_YMM_Hi128:07_|";
+char *ymm8 = "|____XMM:08____||_YMM_Hi128:08_|";
+char *ymm9 = "|____XMM:09____||_YMM_Hi128:09_|";
 char *ymm10 = "|____XMM:10____||_YMM_Hi128:10_|";
 char *ymm11 = "|____XMM:11____||_YMM_Hi128:11_|";
 char *ymm12 = "|____XMM:12____||_YMM_Hi128:12_|";
@@ -260,93 +259,152 @@ char *ymm15 = "|____XMM:15____||_YMM_Hi128:15_|";
 
 void enable_speed_step(int cpu, int on)
 {
-    static const uint64_t ss_bit = (uint64_t) 1 << 32;
-    static const off_t perf_ctl_msr = 0x199;
-    int fd, status;
-    uint64_t val, xval;
-    char msrdev[256];
+	static const uint64_t ss_bit = (uint64_t)1 << 32;
+	static const off_t perf_ctl_msr = 0x199;
+	int fd, status;
+	uint64_t val, xval;
+	char msrdev[256];
 
-    snprintf(msrdev, sizeof(msrdev), "/dev/cpu/%d/msr", cpu);
-    fd = open(msrdev, O_RDWR);
-    if (fd < 0) {
-        fprintf(stderr, "MSR device not available, leaving speed step as it was!\n");
-        return;
-    }
-    if (pread(fd, &val, sizeof(val), perf_ctl_msr) != sizeof(val)) {
-        fprintf(stderr, "Unable to read MSR device register 0x%lx: %s\n",
-                perf_ctl_msr, strerror(errno));
-        return;
-    }
-    status = (val & ss_bit) ? 0 : 1;
-    if (status ^ (on != 0)) {
-        if (on)
-            val &= ~ss_bit;
-        else
-            val |= ss_bit;
-        if (pwrite(fd, &val, sizeof(val), perf_ctl_msr) != sizeof(val)) {
-            fprintf(stderr, "Unable to write MSR device: %s\n", strerror(errno));
-            return;
-        }
-        if (pread(fd, &xval, sizeof(xval), perf_ctl_msr) != sizeof(xval)) {
-            fprintf(stderr, "Unable to read MSR device: %s\n", strerror(errno));
-            return;
-        }
-        if (val != xval) {
-            fprintf(stderr, "Unable to write MSR device. "
-                    "Value 0x%lx did not stick at MSR 0x%lx!\n", val, perf_ctl_msr);
-            return;
-        }
-    }
-    close(fd);
+	snprintf(msrdev, sizeof(msrdev), "/dev/cpu/%d/msr", cpu);
+	fd = open(msrdev, O_RDWR);
+	if (fd < 0) {
+		fprintf(stderr,
+		        "MSR device not available, leaving speed step as it was!\n");
+		return;
+	}
+	if (pread(fd, &val, sizeof(val), perf_ctl_msr) != sizeof(val)) {
+		fprintf(stderr, "Unable to read MSR device register 0x%lx: %s\n",
+		        perf_ctl_msr, strerror(errno));
+		return;
+	}
+	status = (val & ss_bit) ? 0 : 1;
+	if (status ^ (on != 0)) {
+		if (on)
+			val &= ~ss_bit;
+		else
+			val |= ss_bit;
+		if (pwrite(fd, &val, sizeof(val), perf_ctl_msr) != sizeof(val)) {
+			fprintf(stderr, "Unable to write MSR device: %s\n",
+			        strerror(errno));
+			return;
+		}
+		if (pread(fd, &xval, sizeof(xval), perf_ctl_msr) != sizeof(xval)) {
+			fprintf(stderr, "Unable to read MSR device: %s\n", strerror(errno));
+			return;
+		}
+		if (val != xval) {
+			fprintf(stderr,
+			        "Unable to write MSR device. "
+			        "Value 0x%lx did not stick at MSR 0x%lx!\n",
+			        val, perf_ctl_msr);
+			return;
+		}
+	}
+	close(fd);
 
-    return;
+	return;
 }
 
-void dirty_all_data_reg() {
+void dirty_all_data_reg()
+{
 
-	asm volatile ("movq (%0), %%mm0" : /* No Outputs */ : "r" (mm0) : "%mm0");
-	asm volatile ("movq (%0), %%mm1" : /* No Outputs */ : "r" (mm1) : "%mm1");
-	asm volatile ("movq (%0), %%mm2" : /* No Outputs */ : "r" (mm2) : "%mm2");
-	asm volatile ("movq (%0), %%mm3" : /* No Outputs */ : "r" (mm3) : "%mm3");
-	asm volatile ("movq (%0), %%mm4" : /* No Outputs */ : "r" (mm4) : "%mm4");
-	asm volatile ("movq (%0), %%mm5" : /* No Outputs */ : "r" (mm5) : "%mm5");
-	asm volatile ("movq (%0), %%mm6" : /* No Outputs */ : "r" (mm6) : "%mm6");
-	asm volatile ("movq (%0), %%mm7" : /* No Outputs */ : "r" (mm7) : "%mm7");
+	asm volatile("movq (%0), %%mm0" : /* No Outputs */ : "r"(mm0) : "%mm0");
+	asm volatile("movq (%0), %%mm1" : /* No Outputs */ : "r"(mm1) : "%mm1");
+	asm volatile("movq (%0), %%mm2" : /* No Outputs */ : "r"(mm2) : "%mm2");
+	asm volatile("movq (%0), %%mm3" : /* No Outputs */ : "r"(mm3) : "%mm3");
+	asm volatile("movq (%0), %%mm4" : /* No Outputs */ : "r"(mm4) : "%mm4");
+	asm volatile("movq (%0), %%mm5" : /* No Outputs */ : "r"(mm5) : "%mm5");
+	asm volatile("movq (%0), %%mm6" : /* No Outputs */ : "r"(mm6) : "%mm6");
+	asm volatile("movq (%0), %%mm7" : /* No Outputs */ : "r"(mm7) : "%mm7");
 
-	asm volatile ("vmovdqu (%0), %%ymm0" : /* No Outputs */ : "r" (ymm0) : "%xmm0");
-	asm volatile ("vmovdqu (%0), %%ymm1" : /* No Outputs */ : "r" (ymm1) : "%xmm1");
-	asm volatile ("vmovdqu (%0), %%ymm2" : /* No Outputs */ : "r" (ymm2) : "%xmm2");
-	asm volatile ("vmovdqu (%0), %%ymm3" : /* No Outputs */ : "r" (ymm3) : "%xmm3");
-	asm volatile ("vmovdqu (%0), %%ymm4" : /* No Outputs */ : "r" (ymm4) : "%xmm4");
-	asm volatile ("vmovdqu (%0), %%ymm5" : /* No Outputs */ : "r" (ymm5) : "%xmm5");
-	asm volatile ("vmovdqu (%0), %%ymm6" : /* No Outputs */ : "r" (ymm6) : "%xmm6");
-	asm volatile ("vmovdqu (%0), %%ymm7" : /* No Outputs */ : "r" (ymm7) : "%xmm7");
+	asm volatile("vmovdqu (%0), %%ymm0"
+	             : /* No Outputs */
+	             : "r"(ymm0)
+	             : "%xmm0");
+	asm volatile("vmovdqu (%0), %%ymm1"
+	             : /* No Outputs */
+	             : "r"(ymm1)
+	             : "%xmm1");
+	asm volatile("vmovdqu (%0), %%ymm2"
+	             : /* No Outputs */
+	             : "r"(ymm2)
+	             : "%xmm2");
+	asm volatile("vmovdqu (%0), %%ymm3"
+	             : /* No Outputs */
+	             : "r"(ymm3)
+	             : "%xmm3");
+	asm volatile("vmovdqu (%0), %%ymm4"
+	             : /* No Outputs */
+	             : "r"(ymm4)
+	             : "%xmm4");
+	asm volatile("vmovdqu (%0), %%ymm5"
+	             : /* No Outputs */
+	             : "r"(ymm5)
+	             : "%xmm5");
+	asm volatile("vmovdqu (%0), %%ymm6"
+	             : /* No Outputs */
+	             : "r"(ymm6)
+	             : "%xmm6");
+	asm volatile("vmovdqu (%0), %%ymm7"
+	             : /* No Outputs */
+	             : "r"(ymm7)
+	             : "%xmm7");
 
-	asm volatile ("vmovdqu (%0), %%ymm8"  : /* No Outputs */ : "r" (ymm8)  : "%xmm8");
-	asm volatile ("vmovdqu (%0), %%ymm9"  : /* No Outputs */ : "r" (ymm9)  : "%xmm9");
-	asm volatile ("vmovdqu (%0), %%ymm10" : /* No Outputs */ : "r" (ymm10) : "%xmm10");
-	asm volatile ("vmovdqu (%0), %%ymm11" : /* No Outputs */ : "r" (ymm11) : "%xmm11");
-	asm volatile ("vmovdqu (%0), %%ymm12" : /* No Outputs */ : "r" (ymm12) : "%xmm12");
-	asm volatile ("vmovdqu (%0), %%ymm13" : /* No Outputs */ : "r" (ymm13) : "%xmm13");
-	asm volatile ("vmovdqu (%0), %%ymm14" : /* No Outputs */ : "r" (ymm14) : "%xmm14");
-	asm volatile ("vmovdqu (%0), %%ymm15" : /* No Outputs */ : "r" (ymm15) : "%xmm15");
-
+	asm volatile("vmovdqu (%0), %%ymm8"
+	             : /* No Outputs */
+	             : "r"(ymm8)
+	             : "%xmm8");
+	asm volatile("vmovdqu (%0), %%ymm9"
+	             : /* No Outputs */
+	             : "r"(ymm9)
+	             : "%xmm9");
+	asm volatile("vmovdqu (%0), %%ymm10"
+	             : /* No Outputs */
+	             : "r"(ymm10)
+	             : "%xmm10");
+	asm volatile("vmovdqu (%0), %%ymm11"
+	             : /* No Outputs */
+	             : "r"(ymm11)
+	             : "%xmm11");
+	asm volatile("vmovdqu (%0), %%ymm12"
+	             : /* No Outputs */
+	             : "r"(ymm12)
+	             : "%xmm12");
+	asm volatile("vmovdqu (%0), %%ymm13"
+	             : /* No Outputs */
+	             : "r"(ymm13)
+	             : "%xmm13");
+	asm volatile("vmovdqu (%0), %%ymm14"
+	             : /* No Outputs */
+	             : "r"(ymm14)
+	             : "%xmm14");
+	asm volatile("vmovdqu (%0), %%ymm15"
+	             : /* No Outputs */
+	             : "r"(ymm15)
+	             : "%xmm15");
 }
 
 void dirty_x87()
 {
-	 asm volatile ("movq (%0), %%mm0" : /* No Outputs */ : "r" (mm0) : "%mm0");
+	asm volatile("movq (%0), %%mm0" : /* No Outputs */ : "r"(mm0) : "%mm0");
 }
 void dirty_xmm()
 {
-	asm volatile ("movdqu (%0), %%xmm0" : /* No Outputs */ : "r" (xmm0) : "%xmm0");
+	asm volatile("movdqu (%0), %%xmm0"
+	             : /* No Outputs */
+	             : "r"(xmm0)
+	             : "%xmm0");
 }
 void dirty_hi_ymm()
 {
 	// Is there any way to dirty just the high bits?
-	// I have a feeling this probably marks both AVX and SSE components 1 in XINUSE
+	// I have a feeling this probably marks both AVX and SSE components 1 in
+	// XINUSE
 	// TODO
-	asm volatile ("vmovdqu (%0), %%ymm1" : /* No Outputs */ : "r" (hi_ymm1) : "%xmm1");
+	asm volatile("vmovdqu (%0), %%ymm1"
+	             : /* No Outputs */
+	             : "r"(hi_ymm1)
+	             : "%xmm1");
 }
 
 void dirty_xmm_x87()
@@ -379,7 +437,7 @@ void zero_as(struct ancillary_state *as)
 
 void reset_fp()
 {
-	//asm volatile("fninit");
+	// asm volatile("fninit");
 	__builtin_ia32_xrstor64(&default_as, mask);
 }
 
@@ -391,21 +449,20 @@ void print_intro()
 	       "   for modified optimization\n"
 	       "3. Dirtying at top of loop gives us a spectrum for\n"
 	       "   xsaveopt with different amounts of state changed\n"
-		   "4. Dirtying between save and restore helps estimate cost\n"
-		   "   of ext state use in vcore context (these tests\n"
-		   "   should be compared to baseline, as they will\n"
-		   "   use the init optimization)\n"
-		);
-	printf("\nThe result format is: result[tabtab]test_name-test_number-tested_instr\n");
+	       "4. Dirtying between save and restore helps estimate cost\n"
+	       "   of ext state use in vcore context (these tests\n"
+	       "   should be compared to baseline, as they will\n"
+	       "   use the init optimization)\n");
+	printf("\nThe result format is: "
+	       "result[tabtab]test_name-test_number-tested_instr\n");
 }
 
-
-void print_results(char * name, int num, char * instr, int id, double result)
+void print_results(char *name, int num, char *instr, int id, double result)
 {
 	printf("%s-%d-%s\t%d\t%f\n", name, num, instr, id, result);
 }
 
-void print_test_result(char * name, double result)
+void print_test_result(char *name, double result)
 {
 	printf("%s %g\n", name, result);
 }
@@ -424,20 +481,19 @@ void tsc_test(void)
 	}
 
 	/*
-		Timing measurements come with at least a single readTSC call
-		of overhead baked in. Assuming that you have the proper
-		time in the registers as soon as the rdtsc instruction completes,
-		after your "start" value is measured you have the cost of a bit
-		shift and or, and then a pop to return. Your "end" value has the
-		cost of a function call (readTSC) and the actual rdtsc instruction
-		baked in. Thus end - start contains the cost of a readTSC call in
-		addition to whatever you measured.
+	    Timing measurements come with at least a single readTSC call
+	    of overhead baked in. Assuming that you have the proper
+	    time in the registers as soon as the rdtsc instruction completes,
+	    after your "start" value is measured you have the cost of a bit
+	    shift and or, and then a pop to return. Your "end" value has the
+	    cost of a function call (readTSC) and the actual rdtsc instruction
+	    baked in. Thus end - start contains the cost of a readTSC call in
+	    addition to whatever you measured.
 	*/
-	print_results("tsc overhead", 0, "readTSC()", 0, (double)sum/n);
+	print_results("tsc overhead", 0, "readTSC()", 0, (double)sum / n);
 	printf("You should subtract this from the rest of the timings\n");
 	printf("to account for the overhead of the readTSC() function call.\n");
 }
-
 
 uint64_t *save_res;
 uint64_t *rstor_res;
@@ -447,14 +503,15 @@ void nodirty(void)
 }
 
 /* do everything BUT xsave/xrestore. */
-void baseline(char *name, char *opt, int base, void dirty(void), int save /* 1 == xsave, 2 == xsaveopt */)
+void baseline(char *name, char *opt, int base, void dirty(void),
+              int save /* 1 == xsave, 2 == xsaveopt */)
 {
 	int i, j, iter;
 	uint64_t start;
 	uint64_t end;
-	//for(i = 2; i < 5; i++) {
-	for(i = 2; i < 3; i++) {
-		for(j = 0; j < 2; j++) {
+	// for(i = 2; i < 5; i++) {
+	for (i = 2; i < 3; i++) {
+		for (j = 0; j < 2; j++) {
 			zero_as(&as);
 			reset_fp();
 			if (i == 2)
@@ -464,14 +521,14 @@ void baseline(char *name, char *opt, int base, void dirty(void), int save /* 1 =
 					reset_fp();
 					dirty();
 				}
-				
+
 				start = cycles();
-/*
-				if (save == 1)
-					__builtin_ia32_xsave64(&as, mask);
-				else
-					__builtin_ia32_xsaveopt64(&as, mask);
- */
+				/*
+				                if (save == 1)
+				                    __builtin_ia32_xsave64(&as, mask);
+				                else
+				                    __builtin_ia32_xsaveopt64(&as, mask);
+				 */
 				end = cycles();
 				save_res[iter] = end - start;
 				if (i == 4) {
@@ -489,30 +546,34 @@ void baseline(char *name, char *opt, int base, void dirty(void), int save /* 1 =
 		// in principle:
 		// plot "out" using xticlabels and some other shit but ...
 		// can't get it.
-		//printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
+		// printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i,
+		// opt);
 #if 0
 		for (iter = 0; iter < n; ++iter)
 			printf("%d\t%ld %s_xsave%s-%d-xsave%s\n", base + (i-2), save_res[iter] + rstor_res[i], name, opt, i););
 #else
 		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld %s_xsave%s-%d-xsave\n", base + (i-2), save_res[iter], name, opt, i);
+			printf("%d\t%ld %s_xsave%s-%d-xsave\n", base + (i - 2),
+			       save_res[iter], name, opt, i);
 		printf("\n\n");
 		printf("# %s_xsave%s-%d-xrstor64\n", name, opt, i);
 		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld %s_xsave%s-%d-xrstor64\n", base + (i-2) + 50, rstor_res[iter], name, opt, i);
+			printf("%d\t%ld %s_xsave%s-%d-xrstor64\n", base + (i - 2) + 50,
+			       rstor_res[iter], name, opt, i);
 		printf("\n\n");
 #endif
 	}
 }
 
-void programtest(char *name, char *opt, int base, void dirty(void), int save /* 1 == xsave, 2 == xsaveopt */)
+void programtest(char *name, char *opt, int base, void dirty(void),
+                 int save /* 1 == xsave, 2 == xsaveopt */)
 {
 	int i, j, iter;
 	uint64_t start;
 	uint64_t end;
-	//for(i = 2; i < 5; i++) {
-	for(i = 2; i < 3; i++) {
-		for(j = 0; j < 2; j++) {
+	// for(i = 2; i < 5; i++) {
+	for (i = 2; i < 3; i++) {
+		for (j = 0; j < 2; j++) {
 			zero_as(&as);
 			reset_fp();
 			if (i == 2)
@@ -522,7 +583,7 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 					reset_fp();
 					dirty();
 				}
-				
+
 				start = cycles();
 				if (save == 1)
 					__builtin_ia32_xsave64(&as, mask);
@@ -544,7 +605,8 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 		// in principle:
 		// plot "out" using xticlabels and some other shit but ...
 		// can't get it.
-		//printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i, opt);
+		// printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i,
+		// opt);
 #if 0
 		printf("#%s_xsave%s-%d-xsave%s\n", name, opt, i, opt);
 		for (iter = 0; iter < n; ++iter)
@@ -552,11 +614,13 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 #else
 		printf("#%s_xsave%s-%d-xsave%s\n", name, opt, i, opt);
 		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld\t %s_xsave%s-%d\n", base + (i-2), save_res[iter], name, opt, i );
+			printf("%d\t%ld\t %s_xsave%s-%d\n", base + (i - 2), save_res[iter],
+			       name, opt, i);
 		printf("\n\n");
 		printf("#%s_xsave%s-%d-xrstor\n", name, opt, i);
 		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld %s_xsave%s-%d-xrstor\n", base + (i-2) + 50, rstor_res[iter], name, opt, i);
+			printf("%d\t%ld %s_xsave%s-%d-xrstor\n", base + (i - 2) + 50,
+			       rstor_res[iter], name, opt, i);
 		printf("\n\n");
 #endif
 	}
@@ -565,17 +629,16 @@ void programtest(char *name, char *opt, int base, void dirty(void), int save /* 
 struct test {
 	char *name;
 	int index;
-	void (*dirty)(void);} tests[] = {
-	{"baseline", 2, nodirty},
-	{"x87", 4, dirty_x87},
-	{"xmm_x87", 6, dirty_xmm_x87},
-	{"xmm", 8, dirty_xmm},
-	{"hi_ymm", 10, dirty_hi_ymm},
-	{"hi_ymm_xmm", 12, dirty_hi_ymm_xmm},
-	{"hi_ymm_x87", 14, dirty_hi_ymm_x87},
-	{"hi_ymm_xmm_x87", 16, dirty_hi_ymm_xmm_x87},
-	{"all_data_reg", 18, dirty_all_data_reg}
-};
+	void (*dirty)(void);
+} tests[] = {{"baseline", 2, nodirty},
+             {"x87", 4, dirty_x87},
+             {"xmm_x87", 6, dirty_xmm_x87},
+             {"xmm", 8, dirty_xmm},
+             {"hi_ymm", 10, dirty_hi_ymm},
+             {"hi_ymm_xmm", 12, dirty_hi_ymm_xmm},
+             {"hi_ymm_x87", 14, dirty_hi_ymm_x87},
+             {"hi_ymm_xmm_x87", 16, dirty_hi_ymm_xmm_x87},
+             {"all_data_reg", 18, dirty_all_data_reg}};
 
 int setup(int core);
 
@@ -583,28 +646,32 @@ int main(int argc, char *argv[])
 {
 	int i;
 	int core = 31;
-    int opt= 0;
-    static struct option long_options[] = {
-        {"samples",      required_argument,       0,  's' },
-          {"savemask",      required_argument,       0,  'm' },
-          {"core",      required_argument,       0,  'c' },
-      {0,           0,                 0,  0   }
-    };
+	int opt = 0;
+	static struct option long_options[] = {
+	    {"samples", required_argument, 0, 's'},
+	    {"savemask", required_argument, 0, 'm'},
+	    {"core", required_argument, 0, 'c'},
+	    {0, 0, 0, 0}};
 
-    int long_index =0;
-    while ((opt = getopt_long(argc, argv,"c:s:m:", 
-                   long_options, &long_index )) != -1) {
-        switch (opt) {
-             case 'c' : core = strtol(optarg, 0, 0);
-                 break;
-             case 'm' : mask = strtol(optarg, 0, 0);
-                 break;
-             case 's' : n = atoi(optarg);
-                 break;
-             default: fprintf(stderr, "Usage: %s [-m savemask] [-s numsamples]\n", argv[0]);
-                 exit(1);
-        }
-    }
+	int long_index = 0;
+	while ((opt = getopt_long(argc, argv, "c:s:m:", long_options,
+	                          &long_index)) != -1) {
+		switch (opt) {
+		case 'c':
+			core = strtol(optarg, 0, 0);
+			break;
+		case 'm':
+			mask = strtol(optarg, 0, 0);
+			break;
+		case 's':
+			n = atoi(optarg);
+			break;
+		default:
+			fprintf(stderr, "Usage: %s [-m savemask] [-s numsamples]\n",
+			        argv[0]);
+			exit(1);
+		}
+	}
 
 	if (setup(core) < 0) {
 		perror("setup");
@@ -615,10 +682,10 @@ int main(int argc, char *argv[])
 	rstor_res = malloc(n * sizeof(uint64_t));
 
 	// Set up a default extended state that we can use for resets
-	//hexdump("At start", &default_as, sizeof(default_as));
-	asm volatile ("fninit");
+	// hexdump("At start", &default_as, sizeof(default_as));
+	asm volatile("fninit");
 	__builtin_ia32_xsave64(&default_as, 1);
-	//hexdump("fninit and xsave", &default_as, sizeof(default_as));
+	// hexdump("fninit and xsave", &default_as, sizeof(default_as));
 
 	default_as.fp_head_64d.mxcsr = 0x1f80;
 
@@ -629,10 +696,12 @@ int main(int argc, char *argv[])
 	printf("# plot \"whateverfileyoudid>to\" using 1:2:xtic(3)\n");
 
 	baseline("noFPU", "", 0, nodirty, 1);
-	for(i = 0; i < sizeof(tests)/sizeof(tests[0]); i++) {
+	for (i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) {
 		programtest(tests[i].name, "", tests[i].index, tests[i].dirty, 1);
-		programtest(tests[i].name, "opt", tests[i].index + 25, tests[i].dirty, 2);
+		programtest(tests[i].name, "opt", tests[i].index + 25, tests[i].dirty,
+		            2);
 	}
-	printf("#PLEASE NOTE!: I'm not sure if my method here marks just YMM or both YMM and XMM as XINUSE!");
+	printf("#PLEASE NOTE!: I'm not sure if my method here marks just YMM or "
+	       "both YMM and XMM as XINUSE!");
 	return 0;
 }
