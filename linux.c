@@ -62,9 +62,13 @@ void enable_speed_step(int cpu, int on)
 int setup(int core)
 {
 	cpu_set_t my_set;
+
 	CPU_ZERO(&my_set);
 	CPU_SET(core, &my_set);
 	if (sched_setaffinity(0, sizeof(cpu_set_t), &my_set) < 0)
 		return -1;
+	/* https://stackoverflow.com/questions/22309041/rdpmc-in-user-mode-does-not-work-even-with-pce-set */
+	fprintf(stderr, "If you get a segfault, make sure rdpmc is allowed.\n"
+	                "Set /sys/bus/event_source/devices/cpu/rdpmc = 2 on recent kernels (4.0), or 1 for older kernels.\n");
 	return 0;
 }

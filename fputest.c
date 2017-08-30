@@ -598,7 +598,7 @@ void enable_speed_step(int cpu, int on);
 int main(int argc, char *argv[])
 {
 	int i;
-	int core = 31;
+	int core = 0;
 	int opt = 0;
 	static struct option long_options[] = {
 	    {"samples", required_argument, 0, 's'},
@@ -654,7 +654,7 @@ int main(int argc, char *argv[])
 		programtest(tests[i].name, "opt", tests[i].index + 25, tests[i].dirty,
 		            2);
 	}
-	printf("#PLEASE NOTE!: I'm not sure if my method here marks just YMM or "
-	       "both YMM and XMM as XINUSE!");
+	printf("# PLEASE NOTE!: I'm not sure if my method here marks just YMM or "
+	       "both YMM and XMM as XINUSE!\n");
 	return 0;
 }
