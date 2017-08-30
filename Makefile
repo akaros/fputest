@@ -15,6 +15,11 @@
 #     void __builtin_ia32_xsaveopt (void *, long long)
 #     void __builtin_ia32_xsaveopt64 (void *, long long)
 #
+
+PHONY := all
+all: fputest gfputest akfputest
+	@:
+
 fputest: fputest.c linux.c hexdump.c
 	gcc -static -Wall -Werror -Ofast -mfxsr -mxsave -mxsaveopt -o fputest fputest.c linux.c hexdump.c
 
@@ -24,7 +29,8 @@ gfputest: fputest.c linux.c hexdump.c
 akfputest: fputest.c akaros.c hexdump.c
 	x86_64-ucb-akaros-gcc -static -Wall -Werror -Ofast -mfxsr -mxsave -mxsaveopt -o akfputest fputest.c akaros.c hexdump.c
 
-all: fputest gfputest akfputest
-
+PHONY += clean
 clean:
 	rm -f fputest gfputest akfputest
+
+.PHONY: $(PHONY)

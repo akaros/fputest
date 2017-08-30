@@ -9,9 +9,12 @@
 #define __USE_GNU
 #include <unistd.h>
 
-#include <sched.h>
+#include <parlib/uthread.h>
 
-int enable_speed_step(int cpu, int on);
+void enable_speed_step(int cpu, int on)
+{
+}
+
 int setup(int core)
 {
 	return 0;

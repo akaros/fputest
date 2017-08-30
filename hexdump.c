@@ -28,7 +28,7 @@ static int isprint(int c)
 	return (c >= 32 && c <= 126);
 }
 
-void hexdump(char *banner, void *v, int length)
+void fpu_hexdump(char *banner, void *v, int length)
 {
 	int i;
 	uint8_t *m = v;
