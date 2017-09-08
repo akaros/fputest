@@ -1,0 +1,176 @@
+#pragma once
+
+#ifndef __akaros__
+
+// ------------------------------------------------------------
+// We treat the ancillary state the same as Akaros:
+// ------------------------------------------------------------
+struct fp_header_non_64bit {
+	uint16_t fcw;
+	uint16_t fsw;
+	uint8_t ftw;
+	uint8_t padding0;
+	uint16_t fop;
+	uint32_t fpu_ip;
+	uint16_t cs;
+	uint16_t padding1;
+	uint32_t fpu_dp;
+	uint16_t ds;
+	uint16_t padding2;
+	uint32_t mxcsr;
+	uint32_t mxcsr_mask;
+};
+
+/* Header for the 64-bit mode FXSAVE map with promoted operand size */
+struct fp_header_64bit_promoted {
+	uint16_t fcw;
+	uint16_t fsw;
+	uint8_t ftw;
+	uint8_t padding0;
+	uint16_t fop;
+	uint64_t fpu_ip;
+	uint64_t fpu_dp;
+	uint32_t mxcsr;
+	uint32_t mxcsr_mask;
+};
+
+/* Header for the 64-bit mode FXSAVE map with default operand size */
+struct fp_header_64bit_default {
+	uint16_t fcw;
+	uint16_t fsw;
+	uint8_t ftw;
+	uint8_t padding0;
+	uint16_t fop;
+	uint32_t fpu_ip;
+	uint16_t cs;
+	uint16_t padding1;
+	uint32_t fpu_dp;
+	uint16_t ds;
+	uint16_t padding2;
+	uint32_t mxcsr;
+	uint32_t mxcsr_mask;
+};
+
+/* Just for storage space, not for real use	*/
+typedef struct {
+	unsigned int stor[4];
+} __128bits;
+
+/*
+ *  X86_MAX_XCR0 specifies the maximum set of processor extended state
+ *  feature components that Akaros supports saving through the
+ *  XSAVE instructions.
+ *  This may be a superset of available state components on a given
+ *  processor. We CPUID at boot and determine the intersection
+ *  of Akaros-supported and processor-supported features, and we
+ *  save this value to __proc_global_info.x86_default_xcr0 in arch/x86/init.c.
+ *  We guarantee that the set of feature components specified by
+ *  X86_MAX_XCR0 will fit in the ancillary_state struct.
+ *  If you add to the mask, make sure you also extend ancillary_state!
+ */
+
+#define X86_MAX_XCR0 0x2ff
+
+typedef struct ancillary_state {
+	/* Legacy region of the XSAVE area */
+	union { /* whichever header used depends on the mode */
+		struct fp_header_non_64bit fp_head_n64;
+		struct fp_header_64bit_promoted fp_head_64p;
+		struct fp_header_64bit_default fp_head_64d;
+	};
+	/* offset 32 bytes */
+	__128bits st0_mm0; /* 128 bits: 80 for the st0, 48 reserved */
+	__128bits st1_mm1;
+	__128bits st2_mm2;
+	__128bits st3_mm3;
+	__128bits st4_mm4;
+	__128bits st5_mm5;
+	__128bits st6_mm6;
+	__128bits st7_mm7;
+	/* offset 160 bytes */
+	__128bits xmm0;
+	__128bits xmm1;
+	__128bits xmm2;
+	__128bits xmm3;
+	__128bits xmm4;
+	__128bits xmm5;
+	__128bits xmm6;
+	__128bits xmm7;
+	/* xmm8-xmm15 are only available in 64-bit-mode */
+	__128bits xmm8;
+	__128bits xmm9;
+	__128bits xmm10;
+	__128bits xmm11;
+	__128bits xmm12;
+	__128bits xmm13;
+	__128bits xmm14;
+	__128bits xmm15;
+	/* offset 416 bytes */
+	__128bits reserv0;
+	__128bits reserv1;
+	__128bits reserv2;
+	__128bits reserv3;
+	__128bits reserv4;
+	__128bits reserv5;
+	/* offset 512 bytes */
+
+	/*
+	 * XSAVE header (64 bytes, starting at offset 512 from
+	 * the XSAVE area's base address)
+	 */
+
+	// xstate_bv identifies the state components in the XSAVE area
+	uint64_t xstate_bv;
+	/*
+	 *	xcomp_bv[bit 63] is 1 if the compacted format is used, else 0.
+	 *	All bits in xcomp_bv should be 0 if the processor does not support the
+	 *	compaction extensions to the XSAVE feature set.
+	 */
+	uint64_t xcomp_bv;
+	__128bits reserv6;
+
+	/* offset 576 bytes */
+	/*
+	 *	Extended region of the XSAVE area
+	 *	We currently support an extended region of up to 2112 bytes,
+	 *	for a total ancillary_state size of 2688 bytes.
+	 *	This supports x86 state components up through the zmm31 register.
+	 *	If you need more, please ask!
+	 *	See the Intel Architecture Instruction Set Extensions Programming
+	 *	Reference page 3-3 for detailed offsets in this region.
+	 */
+	uint8_t extended_region[2112];
+
+	/* ancillary state  */
+} __attribute__((aligned(64))) ancillary_state_t;
+
+#else
+
+#include <ros/trapframe.h>
+
+#endif
+
+void fpu_hexdump(char *banner, void *v, size_t length);
+int setup(int core);
+void enable_speed_step(int cpu, int on);
+const char *os_name(void);
+
+/* TODO: this will have issues when run concurrently with perf record.  It
+ * should be OK with perf stat.
+ *
+ * On Akaros, you need to run with perf stat.  Otherwise the counter is off.  We
+ * could ask the kernel to turn it on and off for us, same as perf.
+ *
+ * rdpmc isn't serializing.  I tried the same approach as with rdtsc in Akaros.
+ * It seems to be OK, and gives the same results as cpuid; rdpmc; test; rdpmc;
+ * cpuid and similar choices. */
+static inline __attribute__((always_inline))
+uint64_t cycles(void)
+{
+	unsigned int a = 0, d = 0;
+	int ecx = (1 << 30) + 1;	/* fixed counter for unhalted core cycles */
+
+	asm volatile("lfence; rdpmc" : "=a"(a), "=d"(d) : "c"(ecx));
+	return ((uint64_t)a) | (((uint64_t)d) << 32);
+}
+

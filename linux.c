@@ -23,11 +23,11 @@ void enable_speed_step(int cpu, int on)
 	fd = open(msrdev, O_RDWR);
 	if (fd < 0) {
 		fprintf(stderr,
-		        "MSR device not available, leaving speed step as it was!\n");
+		        "Linux: MSR device not available, leaving speed step as it was!\n");
 		return;
 	}
 	if (pread(fd, &val, sizeof(val), perf_ctl_msr) != sizeof(val)) {
-		fprintf(stderr, "Unable to read MSR device register 0x%lx: %s\n",
+		fprintf(stderr, "Linux: Unable to read MSR device register 0x%lx: %s\n",
 		        perf_ctl_msr, strerror(errno));
 		return;
 	}
@@ -38,18 +38,18 @@ void enable_speed_step(int cpu, int on)
 		else
 			val |= ss_bit;
 		if (pwrite(fd, &val, sizeof(val), perf_ctl_msr) != sizeof(val)) {
-			fprintf(stderr, "Unable to write MSR device: %s\n",
+			fprintf(stderr, "Linux: Unable to write MSR device: %s\n",
 			        strerror(errno));
 			return;
 		}
 		if (pread(fd, &xval, sizeof(xval), perf_ctl_msr) != sizeof(xval)) {
-			fprintf(stderr, "Unable to read MSR device: %s\n", strerror(errno));
+			fprintf(stderr, "Linux: Unable to read MSR device: %s\n",
+			        strerror(errno));
 			return;
 		}
 		if (val != xval) {
 			fprintf(stderr,
-			        "Unable to write MSR device. "
-			        "Value 0x%lx did not stick at MSR 0x%lx!\n",
+			        "Linux: Unable to write MSR device.  Value 0x%lx did not stick at MSR 0x%lx!\n",
 			        val, perf_ctl_msr);
 			return;
 		}
@@ -68,7 +68,12 @@ int setup(int core)
 	if (sched_setaffinity(0, sizeof(cpu_set_t), &my_set) < 0)
 		return -1;
 	/* https://stackoverflow.com/questions/22309041/rdpmc-in-user-mode-does-not-work-even-with-pce-set */
-	fprintf(stderr, "If you get a segfault, make sure rdpmc is allowed.\n"
-	                "Set /sys/bus/event_source/devices/cpu/rdpmc = 2 on recent kernels (4.0), or 1 for older kernels.\n");
+	fprintf(stderr, "Linux: If you get a segfault, make sure rdpmc is allowed.\n"
+	                "Linux: Set /sys/bus/event_source/devices/cpu/rdpmc = 2 on recent kernels (4.0), or 1 for older kernels.\n");
 	return 0;
+}
+
+const char *os_name(void)
+{
+	return "Linux";
 }

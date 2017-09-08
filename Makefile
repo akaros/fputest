@@ -16,18 +16,19 @@
 #     void __builtin_ia32_xsaveopt64 (void *, long long)
 #
 
+CFLAGS = -Wall -Wno-format -Wno-unused -Werror -mfxsr -mxsave -mxsaveopt -static -std=gnu99
 PHONY := all
 all: fputest gfputest akfputest
 	@:
 
 fputest: fputest.c linux.c hexdump.c
-	gcc -static -Wall -Werror -Ofast -mfxsr -mxsave -mxsaveopt -o fputest fputest.c linux.c hexdump.c
+	gcc $(CFLAGS) -Ofast -o fputest fputest.c linux.c hexdump.c
 
 gfputest: fputest.c linux.c hexdump.c
-	gcc -static -Wall -Werror -g -mfxsr -mxsave -mxsaveopt -o gfputest fputest.c linux.c hexdump.c
+	gcc $(CFLAGS) -g -o gfputest fputest.c linux.c hexdump.c
 
 akfputest: fputest.c akaros.c hexdump.c
-	x86_64-ucb-akaros-gcc -static -Wall -Werror -Ofast -mfxsr -mxsave -mxsaveopt -o akfputest fputest.c akaros.c hexdump.c
+	x86_64-ucb-akaros-gcc $(CFLAGS) -Ofast -o akfputest fputest.c akaros.c hexdump.c
 
 PHONY += clean
 clean:

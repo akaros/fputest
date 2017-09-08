@@ -1,599 +1,569 @@
+/* Copyright 2016-2017 Google Inc.
+ * Original by:
+ *		Ron Minnich <rminnich@google.com>
+ *		Michael Taufen <mtaufen@google.com>
+ * Overhaul by:
+ *		Barret Rhoden <brho@google.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of
+ * the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but without any warranty; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/* For a quick run on your Linux box, core 7, try something like:
+ *
+ * $ make && ./fputest -c 7 -t XRSTOR && Rscript script.R
+ *
+ * On Akaros, run the akfputest from perf stat.
+ */
+
+#define __USE_GNU
+
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <x86intrin.h>
-#define __USE_GNU
 #include <unistd.h>
-
 #include <sched.h>
+#include <time.h>
+#include <assert.h>
+#include <sys/param.h>
 
-void fpu_hexdump(char *banner, void *v, size_t length);
+#include "fputest.h"
 
-/*
+static int nr_iters = 32;
+static uint64_t *save_res;
+static uint64_t rd_overhead;
+static FILE *outfile;
+static char *outfile_name = "raw.dat";
+static unsigned int family, model, stepping;
+static unsigned char vendor[13];
+static struct ancillary_state as;
+static struct ancillary_state alt_as;
+static struct ancillary_state init_as;
+static struct ancillary_state dirty_as;
 
-This version of the test program rearranges the ids of the tests
-so that they get plotted in a different order.
-
-The new order will be
-
-baseline xsave64 test
-xsave64 tests
-baseline xsaveopt64 test
-xsaveopt64 tests
-baseline xrstor6464 after xsave64 test
-xrstor6464 after xsasve64 tests
-baseline xrstor6464 after xsaveopt64 test
-xrstor6464 after xsaveopt64 tests
-
-But still in the same order, under those categories, that the
-tests occurred, so that the first test in "xsave64 tests"
-corresponds to the first test in "xrstor6464 tests that followed an xsasve64"
-and so forth.
-*/
-
-static inline uint64_t cycles()
+static inline void cpuid(uint32_t level1, uint32_t level2, uint32_t *eaxp,
+                         uint32_t *ebxp, uint32_t *ecxp, uint32_t *edxp)
 {
-	unsigned int a = 0, d = 0;
+	uint32_t eax, ebx, ecx, edx;
 
-	int ecx = (1 << 30) + 1; // What counter it selects
-	__asm __volatile("rdpmc" : "=a"(a), "=d"(d) : "c"(ecx));
-	return ((uint64_t)a) | (((uint64_t)d) << 32);
+	asm volatile("cpuid"
+	             : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+	             : "a"(level1), "c"(level2));
+	if (eaxp)
+		*eaxp = eax;
+	if (ebxp)
+		*ebxp = ebx;
+	if (ecxp)
+		*ecxp = ecx;
+	if (edxp)
+		*edxp = edx;
 }
 
-/*
-SERIOUS TODO: We MUST pin this test to a single core, because the TSC clocks may
-              not be synchronized between cores! If the process is migrated,
-then the count could be wrong.
+static void set_vendor_4_bytes(unsigned char *str, uint32_t reg)
+{
+	for (int i = 0; i < sizeof(reg); i++)
+		str[i] = (reg >> i * 8) & 0xff;
+}
 
+static void set_cpuinfo(void)
+{
+	uint32_t eax, ebx, ecx, edx;
+	unsigned int ext_family, ext_model;
 
-Tests the performance of xsave64 vs xsaveopt64
+	cpuid(0x0, 0x0, NULL, &ebx, &ecx, &edx);
+	set_vendor_4_bytes(vendor + 0, ebx);
+	set_vendor_4_bytes(vendor + 4, edx);
+	set_vendor_4_bytes(vendor + 8, ecx);
+	vendor[12] = '\0';
 
-xsave64/xrstor6464 will be our baseline
+	cpuid(0x1, 0x0, &eax, NULL, NULL, NULL);
+	ext_family = (eax >> 20) & 0xff;
+	ext_model = (eax >> 16) & 0xf;
+	family = (eax >> 8) & 0xf;
+	model = (eax >> 4) & 0xf;
+	if ((family == 15) || (family == 6))
+		model += ext_model << 4;
+	if (family == 15)
+		family += ext_family;
+	stepping = (eax >> 0) & 0xf;
+}
 
-We will always time the xsave64 and xrstor6464 separately
+static inline __attribute__((always_inline))
+uint64_t start_timing(void)
+{
+    return cycles();
+}
 
+static inline __attribute__((always_inline))
+uint64_t stop_timing(uint64_t start)
+{
+    uint64_t end, diff;
 
-There four kinds of tests:
+	end = cycles();
+	diff = end - start;		/* unsigned, wraparound sorts itself out */
+    diff -= rd_overhead;
+	if ((int64_t) diff < 0)
+		return 1;
+	return diff;
+}
 
-1. Baseline tells us difference for init optimization
+static inline uint64_t rxcr0(void)
+{
+	uint32_t eax, edx;
 
-2. Dirtying outside the loop tells us difference
-    for modified optimization
+	asm volatile("xgetbv" : "=a"(eax), "=d"(edx) : "c" (0));
+	return ((uint64_t)edx << 32) | eax;
+}
 
-3. Dirtying at top of loop gives us a spectrum for
-    xsaveopt64 with different amounts of state changed
-
-4. Dirtying between save and restore tells us cost
-     of ext state use in vcore context (these tests
-     should be compared to baseline, as they will
-     use the init optimization)
-*/
-
-// ------------------------------------------------------------
-// We treat the ancillary state the same as Akaros:
-// ------------------------------------------------------------
-struct fp_header_non_64bit {
-	uint16_t fcw;
-	uint16_t fsw;
-	uint8_t ftw;
-	uint8_t padding0;
-	uint16_t fop;
-	uint32_t fpu_ip;
-	uint16_t cs;
-	uint16_t padding1;
-	uint32_t fpu_dp;
-	uint16_t ds;
-	uint16_t padding2;
-	uint32_t mxcsr;
-	uint32_t mxcsr_mask;
-};
-
-/* Header for the 64-bit mode FXSAVE map with promoted operand size */
-struct fp_header_64bit_promoted {
-	uint16_t fcw;
-	uint16_t fsw;
-	uint8_t ftw;
-	uint8_t padding0;
-	uint16_t fop;
-	uint64_t fpu_ip;
-	uint64_t fpu_dp;
-	uint32_t mxcsr;
-	uint32_t mxcsr_mask;
-};
-
-/* Header for the 64-bit mode FXSAVE map with default operand size */
-struct fp_header_64bit_default {
-	uint16_t fcw;
-	uint16_t fsw;
-	uint8_t ftw;
-	uint8_t padding0;
-	uint16_t fop;
-	uint32_t fpu_ip;
-	uint16_t cs;
-	uint16_t padding1;
-	uint32_t fpu_dp;
-	uint16_t ds;
-	uint16_t padding2;
-	uint32_t mxcsr;
-	uint32_t mxcsr_mask;
-};
-
-/* Just for storage space, not for real use	*/
-typedef struct {
-	unsigned int stor[4];
-} __128bits;
-
-/*
- *  X86_MAX_XCR0 specifies the maximum set of processor extended state
- *  feature components that Akaros supports saving through the
- *  XSAVE instructions.
- *  This may be a superset of available state components on a given
- *  processor. We CPUID at boot and determine the intersection
- *  of Akaros-supported and processor-supported features, and we
- *  save this value to __proc_global_info.x86_default_xcr0 in arch/x86/init.c.
- *  We guarantee that the set of feature components specified by
- *  X86_MAX_XCR0 will fit in the ancillary_state struct.
- *  If you add to the mask, make sure you also extend ancillary_state!
+/* This gets passed to XSAVE via EDX:EAX.  Internally, it gets ANDed with xcr0.
+ * We're assuming xcr0 >= the mask (and assert that at runtime).  We're trying
+ * to set the state-component bitmap to 'everything' by default.
+ *		Bit 0: x87
+ *		Bit 1: SSE
+ *		Bit 2: AVX
  */
+static unsigned long long mask = 0x7;
 
-#define X86_MAX_XCR0 0x2ff
+static char *mm0 = "|_MM:0_|";
+static char *mm1 = "|_MM:1_|";
+static char *mm2 = "|_MM:2_|";
+static char *mm3 = "|_MM:3_|";
+static char *mm4 = "|_MM:4_|";
+static char *mm5 = "|_MM:5_|";
+static char *mm6 = "|_MM:6_|";
+static char *mm7 = "|_MM:7_|";
 
-typedef struct ancillary_state {
-	/* Legacy region of the XSAVE area */
-	union { /* whichever header used depends on the mode */
-		struct fp_header_non_64bit fp_head_n64;
-		struct fp_header_64bit_promoted fp_head_64p;
-		struct fp_header_64bit_default fp_head_64d;
-	};
-	/* offset 32 bytes */
-	__128bits st0_mm0; /* 128 bits: 80 for the st0, 48 reserved */
-	__128bits st1_mm1;
-	__128bits st2_mm2;
-	__128bits st3_mm3;
-	__128bits st4_mm4;
-	__128bits st5_mm5;
-	__128bits st6_mm6;
-	__128bits st7_mm7;
-	/* offset 160 bytes */
-	__128bits xmm0;
-	__128bits xmm1;
-	__128bits xmm2;
-	__128bits xmm3;
-	__128bits xmm4;
-	__128bits xmm5;
-	__128bits xmm6;
-	__128bits xmm7;
-	/* xmm8-xmm15 are only available in 64-bit-mode */
-	__128bits xmm8;
-	__128bits xmm9;
-	__128bits xmm10;
-	__128bits xmm11;
-	__128bits xmm12;
-	__128bits xmm13;
-	__128bits xmm14;
-	__128bits xmm15;
-	/* offset 416 bytes */
-	__128bits reserv0;
-	__128bits reserv1;
-	__128bits reserv2;
-	__128bits reserv3;
-	__128bits reserv4;
-	__128bits reserv5;
-	/* offset 512 bytes */
+static char *xmm0 = "|____XMM:00____|";
+static char *xmm1 = "|____XMM:01____|";
+static char *xmm2 = "|____XMM:02____|";
+static char *xmm3 = "|____XMM:03____|";
+static char *xmm4 = "|____XMM:04____|";
+static char *xmm5 = "|____XMM:05____|";
+static char *xmm6 = "|____XMM:06____|";
+static char *xmm7 = "|____XMM:07____|";
 
-	/*
-	 * XSAVE header (64 bytes, starting at offset 512 from
-	 * the XSAVE area's base address)
-	 */
-
-	// xstate_bv identifies the state components in the XSAVE area
-	uint64_t xstate_bv;
-	/*
-	 *	xcomp_bv[bit 63] is 1 if the compacted format is used, else 0.
-	 *	All bits in xcomp_bv should be 0 if the processor does not support the
-	 *	compaction extensions to the XSAVE feature set.
-	 */
-	uint64_t xcomp_bv;
-	__128bits reserv6;
-
-	/* offset 576 bytes */
-	/*
-	 *	Extended region of the XSAVE area
-	 *	We currently support an extended region of up to 2112 bytes,
-	 *	for a total ancillary_state size of 2688 bytes.
-	 *	This supports x86 state components up through the zmm31 register.
-	 *	If you need more, please ask!
-	 *	See the Intel Architecture Instruction Set Extensions Programming
-	 *	Reference page 3-3 for detailed offsets in this region.
-	 */
-	uint8_t extended_region[2112];
-
-	/* ancillary state  */
-} __attribute__((aligned(64))) ancillary_state_t;
-// ------------------------------------------------------------
-// End Akaros-specific stuff
-// ------------------------------------------------------------
-
-#define XSAVE "xsave"
-#define XSAVEOPT "xsaveopt"
-
-// The ancillary state region used for all the tests
-struct ancillary_state as;
-struct ancillary_state default_as;
-
-unsigned long long mask = 7; // consider avoiding bit 0.
-
-char *mm0 = "|_MM:0_|";
-char *xmm0 = "|____XMM:00____|";
-char *hi_ymm1 = "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0|_YMM_Hi128:01_|";
-
-char *mm1 = "|_MM:1_|";
-char *mm2 = "|_MM:2_|";
-char *mm3 = "|_MM:3_|";
-char *mm4 = "|_MM:4_|";
-char *mm5 = "|_MM:5_|";
-char *mm6 = "|_MM:6_|";
-char *mm7 = "|_MM:7_|";
+static char *hi_ymm0 = "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0|_YMM_Hi128:00_|";
 
 // Each of these strings is 32 bytes long, excluding the terminating \0.
-char *ymm0 = "|____XMM:00____||_YMM_Hi128:00_|";
-char *ymm1 = "|____XMM:01____||_YMM_Hi128:01_|";
-char *ymm2 = "|____XMM:02____||_YMM_Hi128:02_|";
-char *ymm3 = "|____XMM:03____||_YMM_Hi128:03_|";
-char *ymm4 = "|____XMM:04____||_YMM_Hi128:04_|";
-char *ymm5 = "|____XMM:05____||_YMM_Hi128:05_|";
-char *ymm6 = "|____XMM:06____||_YMM_Hi128:06_|";
-char *ymm7 = "|____XMM:07____||_YMM_Hi128:07_|";
-char *ymm8 = "|____XMM:08____||_YMM_Hi128:08_|";
-char *ymm9 = "|____XMM:09____||_YMM_Hi128:09_|";
-char *ymm10 = "|____XMM:10____||_YMM_Hi128:10_|";
-char *ymm11 = "|____XMM:11____||_YMM_Hi128:11_|";
-char *ymm12 = "|____XMM:12____||_YMM_Hi128:12_|";
-char *ymm13 = "|____XMM:13____||_YMM_Hi128:13_|";
-char *ymm14 = "|____XMM:14____||_YMM_Hi128:14_|";
-char *ymm15 = "|____XMM:15____||_YMM_Hi128:15_|";
+static char *ymm0 = "|____XMM:00____||_YMM_Hi128:00_|";
+static char *ymm1 = "|____XMM:01____||_YMM_Hi128:01_|";
+static char *ymm2 = "|____XMM:02____||_YMM_Hi128:02_|";
+static char *ymm3 = "|____XMM:03____||_YMM_Hi128:03_|";
+static char *ymm4 = "|____XMM:04____||_YMM_Hi128:04_|";
+static char *ymm5 = "|____XMM:05____||_YMM_Hi128:05_|";
+static char *ymm6 = "|____XMM:06____||_YMM_Hi128:06_|";
+static char *ymm7 = "|____XMM:07____||_YMM_Hi128:07_|";
+static char *ymm8 = "|____XMM:08____||_YMM_Hi128:08_|";
+static char *ymm9 = "|____XMM:09____||_YMM_Hi128:09_|";
+static char *ymm10 = "|____XMM:10____||_YMM_Hi128:10_|";
+static char *ymm11 = "|____XMM:11____||_YMM_Hi128:11_|";
+static char *ymm12 = "|____XMM:12____||_YMM_Hi128:12_|";
+static char *ymm13 = "|____XMM:13____||_YMM_Hi128:13_|";
+static char *ymm14 = "|____XMM:14____||_YMM_Hi128:14_|";
+static char *ymm15 = "|____XMM:15____||_YMM_Hi128:15_|";
 
-void dirty_all_data_reg()
+static void dirty_all_data_reg(void)
 {
+	asm volatile("movq (%0), %%mm0" : : "r"(mm0) : "%mm0");
+	asm volatile("movq (%0), %%mm1" : : "r"(mm1) : "%mm1");
+	asm volatile("movq (%0), %%mm2" : : "r"(mm2) : "%mm2");
+	asm volatile("movq (%0), %%mm3" : : "r"(mm3) : "%mm3");
+	asm volatile("movq (%0), %%mm4" : : "r"(mm4) : "%mm4");
+	asm volatile("movq (%0), %%mm5" : : "r"(mm5) : "%mm5");
+	asm volatile("movq (%0), %%mm6" : : "r"(mm6) : "%mm6");
+	asm volatile("movq (%0), %%mm7" : : "r"(mm7) : "%mm7");
 
-	asm volatile("movq (%0), %%mm0" : /* No Outputs */ : "r"(mm0) : "%mm0");
-	asm volatile("movq (%0), %%mm1" : /* No Outputs */ : "r"(mm1) : "%mm1");
-	asm volatile("movq (%0), %%mm2" : /* No Outputs */ : "r"(mm2) : "%mm2");
-	asm volatile("movq (%0), %%mm3" : /* No Outputs */ : "r"(mm3) : "%mm3");
-	asm volatile("movq (%0), %%mm4" : /* No Outputs */ : "r"(mm4) : "%mm4");
-	asm volatile("movq (%0), %%mm5" : /* No Outputs */ : "r"(mm5) : "%mm5");
-	asm volatile("movq (%0), %%mm6" : /* No Outputs */ : "r"(mm6) : "%mm6");
-	asm volatile("movq (%0), %%mm7" : /* No Outputs */ : "r"(mm7) : "%mm7");
+	asm volatile("vmovdqu (%0), %%ymm0" : : "r"(ymm0) : "%xmm0");
+	asm volatile("vmovdqu (%0), %%ymm1" : : "r"(ymm1) : "%xmm1");
+	asm volatile("vmovdqu (%0), %%ymm2" : : "r"(ymm2) : "%xmm2");
+	asm volatile("vmovdqu (%0), %%ymm3" : : "r"(ymm3) : "%xmm3");
+	asm volatile("vmovdqu (%0), %%ymm4" : : "r"(ymm4) : "%xmm4");
+	asm volatile("vmovdqu (%0), %%ymm5" : : "r"(ymm5) : "%xmm5");
+	asm volatile("vmovdqu (%0), %%ymm6" : : "r"(ymm6) : "%xmm6");
+	asm volatile("vmovdqu (%0), %%ymm7" : : "r"(ymm7) : "%xmm7");
 
-	asm volatile("vmovdqu (%0), %%ymm0"
-	             : /* No Outputs */
-	             : "r"(ymm0)
-	             : "%xmm0");
-	asm volatile("vmovdqu (%0), %%ymm1"
-	             : /* No Outputs */
-	             : "r"(ymm1)
-	             : "%xmm1");
-	asm volatile("vmovdqu (%0), %%ymm2"
-	             : /* No Outputs */
-	             : "r"(ymm2)
-	             : "%xmm2");
-	asm volatile("vmovdqu (%0), %%ymm3"
-	             : /* No Outputs */
-	             : "r"(ymm3)
-	             : "%xmm3");
-	asm volatile("vmovdqu (%0), %%ymm4"
-	             : /* No Outputs */
-	             : "r"(ymm4)
-	             : "%xmm4");
-	asm volatile("vmovdqu (%0), %%ymm5"
-	             : /* No Outputs */
-	             : "r"(ymm5)
-	             : "%xmm5");
-	asm volatile("vmovdqu (%0), %%ymm6"
-	             : /* No Outputs */
-	             : "r"(ymm6)
-	             : "%xmm6");
-	asm volatile("vmovdqu (%0), %%ymm7"
-	             : /* No Outputs */
-	             : "r"(ymm7)
-	             : "%xmm7");
-
-	asm volatile("vmovdqu (%0), %%ymm8"
-	             : /* No Outputs */
-	             : "r"(ymm8)
-	             : "%xmm8");
-	asm volatile("vmovdqu (%0), %%ymm9"
-	             : /* No Outputs */
-	             : "r"(ymm9)
-	             : "%xmm9");
-	asm volatile("vmovdqu (%0), %%ymm10"
-	             : /* No Outputs */
-	             : "r"(ymm10)
-	             : "%xmm10");
-	asm volatile("vmovdqu (%0), %%ymm11"
-	             : /* No Outputs */
-	             : "r"(ymm11)
-	             : "%xmm11");
-	asm volatile("vmovdqu (%0), %%ymm12"
-	             : /* No Outputs */
-	             : "r"(ymm12)
-	             : "%xmm12");
-	asm volatile("vmovdqu (%0), %%ymm13"
-	             : /* No Outputs */
-	             : "r"(ymm13)
-	             : "%xmm13");
-	asm volatile("vmovdqu (%0), %%ymm14"
-	             : /* No Outputs */
-	             : "r"(ymm14)
-	             : "%xmm14");
-	asm volatile("vmovdqu (%0), %%ymm15"
-	             : /* No Outputs */
-	             : "r"(ymm15)
-	             : "%xmm15");
+	asm volatile("vmovdqu (%0), %%ymm8" : : "r"(ymm8) : "%xmm8");
+	asm volatile("vmovdqu (%0), %%ymm9" : : "r"(ymm9) : "%xmm9");
+	asm volatile("vmovdqu (%0), %%ymm10" : : "r"(ymm10) : "%xmm10");
+	asm volatile("vmovdqu (%0), %%ymm11" : : "r"(ymm11) : "%xmm11");
+	asm volatile("vmovdqu (%0), %%ymm12" : : "r"(ymm12) : "%xmm12");
+	asm volatile("vmovdqu (%0), %%ymm13" : : "r"(ymm13) : "%xmm13");
+	asm volatile("vmovdqu (%0), %%ymm14" : : "r"(ymm14) : "%xmm14");
+	asm volatile("vmovdqu (%0), %%ymm15" : : "r"(ymm15) : "%xmm15");
 }
 
-void dirty_x87()
+static void dirty_x87(void)
 {
-	asm volatile("movq (%0), %%mm0" : /* No Outputs */ : "r"(mm0) : "%mm0");
-}
-void dirty_xmm()
-{
-	asm volatile("movdqu (%0), %%xmm0"
-	             : /* No Outputs */
-	             : "r"(xmm0)
-	             : "%xmm0");
-}
-void dirty_hi_ymm()
-{
-	// Is there any way to dirty just the high bits?
-	// I have a feeling this probably marks both AVX and SSE components 1 in
-	// XINUSE
-	// TODO
-	asm volatile("vmovdqu (%0), %%ymm1"
-	             : /* No Outputs */
-	             : "r"(hi_ymm1)
-	             : "%xmm1");
+	asm volatile("movq (%0), %%mm0" : : "r"(mm0) : "%mm0");
 }
 
-void dirty_xmm_x87()
+static void dirty_xmm(void)
+{
+	asm volatile("movdqu (%0), %%xmm0" : : "r"(xmm0) : "%xmm0");
+}
+
+/* Dirtying one xmm seems to have the same effect as dirtying all. */
+static void dirty_all_xmm(void)
+{
+	asm volatile("movdqu (%0), %%xmm0" : : "r"(xmm0) : "%xmm0");
+	asm volatile("movdqu (%0), %%xmm1" : : "r"(xmm1) : "%xmm1");
+	asm volatile("movdqu (%0), %%xmm2" : : "r"(xmm2) : "%xmm2");
+	asm volatile("movdqu (%0), %%xmm3" : : "r"(xmm3) : "%xmm3");
+	asm volatile("movdqu (%0), %%xmm4" : : "r"(xmm4) : "%xmm4");
+	asm volatile("movdqu (%0), %%xmm5" : : "r"(xmm5) : "%xmm5");
+	asm volatile("movdqu (%0), %%xmm6" : : "r"(xmm6) : "%xmm6");
+	asm volatile("movdqu (%0), %%xmm7" : : "r"(xmm7) : "%xmm7");
+}
+
+/* Not sure if touching a ymm also touches the xmm / x87.  This applies to all
+ * of the tests using hi_ymm. */
+static void dirty_hi_ymm(void)
+{
+	asm volatile("vmovdqu (%0), %%ymm0" : : "r"(hi_ymm0) : "%xmm0");
+}
+
+static void dirty_xmm_x87(void)
 {
 	dirty_xmm();
 	dirty_x87();
 }
-void dirty_hi_ymm_xmm()
+
+static void dirty_hi_ymm_xmm(void)
 {
 	dirty_hi_ymm();
 	dirty_xmm();
 }
-void dirty_hi_ymm_x87()
+
+static void dirty_hi_ymm_x87(void)
 {
-	// TODO: Not sure if there's a way to only dirty the high ymms...
 	dirty_hi_ymm();
 	dirty_x87();
 }
-void dirty_hi_ymm_xmm_x87()
+
+static void dirty_hi_ymm_xmm_x87(void)
 {
 	dirty_hi_ymm();
 	dirty_xmm();
 	dirty_x87();
 }
 
-void zero_as(struct ancillary_state *as)
+static void noop(void)
 {
-	memset(as, 0x0, sizeof(struct ancillary_state));
 }
 
-void reset_fp()
+/* Sets 'as' to represent an initialized, unmodified FP state.  Note this may
+ * dirty your processors XMMs! */
+static void initialize_as(struct ancillary_state *as)
 {
-	// asm volatile("fninit");
-	__builtin_ia32_xrstor64(&default_as, mask);
+	memcpy(as, &init_as, sizeof(struct ancillary_state));
 }
 
-void print_intro()
+/* Sets AS to represent a fully modified FP state.  Note this may dirty your
+ * processors XMMs! */
+static void full_dirty_as(struct ancillary_state *as)
 {
-	printf("The type of test is identified by a number:\n"
-	       "1. Baseline tells us difference for init optimization\n"
-	       "2. Dirtying outside the loop tells us difference\n"
-	       "   for modified optimization\n"
-	       "3. Dirtying at top of loop gives us a spectrum for\n"
-	       "   xsaveopt with different amounts of state changed\n"
-	       "4. Dirtying between save and restore helps estimate cost\n"
-	       "   of ext state use in vcore context (these tests\n"
-	       "   should be compared to baseline, as they will\n"
-	       "   use the init optimization)\n");
-	printf("\nThe result format is: "
-	       "result[tabtab]test_name-test_number-tested_instr\n");
+	memcpy(as, &dirty_as, sizeof(struct ancillary_state));
 }
 
-void print_results(char *name, int num, char *instr, int id, double result)
+/* Sets the processor's FP state to an initialized, unmodified state. */
+static void reset_fp(void)
 {
-	printf("%s-%d-%s\t%d\t%f\n", name, num, instr, id, result);
+	__builtin_ia32_xrstor64(&init_as, mask);
 }
 
-void print_test_result(char *name, double result)
+static uint64_t abs_diff(uint64_t x, uint64_t y)
 {
-	printf("%s %g\n", name, result);
+	return x >= y ? x - y : y - x;
 }
 
-int n = 32;
-void tsc_test(void)
+static uint64_t compute_rd_overhead(void)
 {
-	uint64_t i;
 	uint64_t start;
 	uint64_t end;
 	uint64_t sum = 0;
-	for (i = 0; i < n; ++i) {
+	uint64_t opt1, opt2;
+	#define NR_LOOPS 10000
+
+	/* There's a couple ways you can compute this.  The first way is the way
+	 * we'll use it: just two reads, and using the measurement of each iteration
+	 * to measure that iteration. */
+	for (int i = 0; i < NR_LOOPS; i++) {
 		start = cycles();
 		end = cycles();
 		sum += (end - start);
 	}
+	opt1 = sum / NR_LOOPS;
+	/* The second way is to just do a bunch of the calls, and only use the last
+	 * measurement. */
+	start = cycles();
+	for (int i = 0; i < NR_LOOPS; i++)
+		end = cycles();
+	opt2 = (end - start) / NR_LOOPS;
 
-	/*
-	    Timing measurements come with at least a single readTSC call
-	    of overhead baked in. Assuming that you have the proper
-	    time in the registers as soon as the rdtsc instruction completes,
-	    after your "start" value is measured you have the cost of a bit
-	    shift and or, and then a pop to return. Your "end" value has the
-	    cost of a function call (readTSC) and the actual rdtsc instruction
-	    baked in. Thus end - start contains the cost of a readTSC call in
-	    addition to whatever you measured.
-	*/
-	print_results("tsc overhead", 0, "readTSC()", 0, (double)sum / n);
-	printf("You should subtract this from the rest of the timings\n");
-	printf("to account for the overhead of the readTSC() function call.\n");
-}
-
-uint64_t *save_res;
-uint64_t *rstor_res;
-
-void nodirty(void)
-{
-}
-
-/* do everything BUT xsave/xrestore. */
-void baseline(char *name, char *opt, int base, void dirty(void),
-              int save /* 1 == xsave, 2 == xsaveopt */)
-{
-	int i, j, iter;
-	uint64_t start;
-	uint64_t end;
-	// for(i = 2; i < 5; i++) {
-	for (i = 2; i < 3; i++) {
-		for (j = 0; j < 2; j++) {
-			zero_as(&as);
-			reset_fp();
-			if (i == 2)
-				dirty();
-			for (iter = 0; iter < n; iter++) {
-				if (i == 3) {
-					reset_fp();
-					dirty();
-				}
-
-				start = cycles();
-				/*
-				                if (save == 1)
-				                    __builtin_ia32_xsave64(&as, mask);
-				                else
-				                    __builtin_ia32_xsaveopt64(&as, mask);
-				 */
-				end = cycles();
-				save_res[iter] = end - start;
-				if (i == 4) {
-					reset_fp();
-					dirty();
-				}
-				start = cycles();
-				//__builtin_ia32_xrstor64(&as, mask);
-				end = cycles();
-				rstor_res[iter] = end - start;
-			}
-		}
-		printf("# %s_xsave%s-%d-xsave%s\n", name, opt, i, opt);
-		// leave off until we figure out how to make it work.
-		// in principle:
-		// plot "out" using xticlabels and some other shit but ...
-		// can't get it.
-		// printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i,
-		// opt);
-#if 0
-		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld %s_xsave%s-%d-xsave%s\n", base + (i-2), save_res[iter] + rstor_res[i], name, opt, i););
-#else
-		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld %s_xsave%s-%d-xsave\n", base + (i - 2),
-			       save_res[iter], name, opt, i);
-		printf("\n\n");
-		printf("# %s_xsave%s-%d-xrstor64\n", name, opt, i);
-		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld %s_xsave%s-%d-xrstor64\n", base + (i - 2) + 50,
-			       rstor_res[iter], name, opt, i);
-		printf("\n\n");
-#endif
+	/* Note that, like with rdtsc, rdpmc's latency may hide some instructions.
+	 * I was able to squeeze in a couple movqs to stack addresses before
+	 * noticing a difference.  If you want to play with it, try this:
+	 *
+		#define JMAX 3
+		long foo[JMAX];
+	
+		for (int j = 0; j < JMAX; j++)
+			asm volatile("movq %%rax, %0;" : : "m"(foo[j]));
+	 */
+	/* 2 seems reasonable for rdpmc. */
+	if (abs_diff(opt1, opt2) > 2) {
+		fprintf(stderr,
+		        "Overhead diff between %llu %llu is too great (interference?), try again!\n",
+		        opt1, opt2);
+		exit(-1);
 	}
+	fprintf(stderr,
+	        "Measurement overhead is %llu, subtracted from the results\n",
+	        MIN(opt1, opt2));
+	return MIN(opt1, opt2);
 }
 
-void programtest(char *name, char *opt, int base, void dirty(void),
-                 int save /* 1 == xsave, 2 == xsaveopt */)
-{
-	int i, j, iter;
-	uint64_t start;
-	uint64_t end;
-	// for(i = 2; i < 5; i++) {
-	for (i = 2; i < 3; i++) {
-		for (j = 0; j < 2; j++) {
-			zero_as(&as);
-			reset_fp();
-			if (i == 2)
-				dirty();
-			for (iter = 0; iter < n; iter++) {
-				if (i == 3) {
-					reset_fp();
-					dirty();
-				}
-
-				start = cycles();
-				if (save == 1)
-					__builtin_ia32_xsave64(&as, mask);
-				else
-					__builtin_ia32_xsaveopt64(&as, mask);
-				end = cycles();
-				save_res[iter] = end - start;
-				if (i == 4) {
-					reset_fp();
-					dirty();
-				}
-				start = cycles();
-				__builtin_ia32_xrstor64(&as, mask);
-				end = cycles();
-				rstor_res[iter] = end - start;
-			}
-		}
-		// leave off until we figure out how to make it work.
-		// in principle:
-		// plot "out" using xticlabels and some other shit but ...
-		// can't get it.
-		// printf("%d -20 %s_xsave%s-%d-xsave%s\n", base + (i-2), name, opt, i,
-		// opt);
-#if 0
-		printf("#%s_xsave%s-%d-xsave%s\n", name, opt, i, opt);
-		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld\n", base + (i-2), save_res[iter] + rstor_res[i]);
-#else
-		printf("#%s_xsave%s-%d-xsave%s\n", name, opt, i, opt);
-		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld\t %s_xsave%s-%d\n", base + (i - 2), save_res[iter],
-			       name, opt, i);
-		printf("\n\n");
-		printf("#%s_xsave%s-%d-xrstor\n", name, opt, i);
-		for (iter = 0; iter < n; ++iter)
-			printf("%d\t%ld %s_xsave%s-%d-xrstor\n", base + (i - 2) + 50,
-			       rstor_res[iter], name, opt, i);
-		printf("\n\n");
-#endif
-	}
-}
-
-struct test {
+/* Keep the names at the same width for easy R alignment.  clobbered_xstatebv is
+ * three bits we expect the test to clobber on a clean/inited FPU.  We'll assert
+ * this at runtime. */
+struct dirty_test {
 	char *name;
-	int index;
+	uint64_t clobbered_xstatebv;
 	void (*dirty)(void);
-} tests[] = {{"baseline", 2, nodirty},
-             {"x87", 4, dirty_x87},
-             {"xmm_x87", 6, dirty_xmm_x87},
-             {"xmm", 8, dirty_xmm},
-             {"hi_ymm", 10, dirty_hi_ymm},
-             {"hi_ymm_xmm", 12, dirty_hi_ymm_xmm},
-             {"hi_ymm_x87", 14, dirty_hi_ymm_x87},
-             {"hi_ymm_xmm_x87", 16, dirty_hi_ymm_xmm_x87},
-             {"all_data_reg", 18, dirty_all_data_reg}};
+} dirty_tests[] = {
+	{"...........noop", 0x0, noop},
+	{".........reinit", 0x0, reset_fp},
+	{"............x87", 0x1, dirty_x87},
+	{"............xmm", 0x2, dirty_xmm},
+	{"........xmm_x87", 0x3, dirty_xmm_x87},
+	{".........hi_ymm", 0x6, dirty_hi_ymm},		/* touching ymm touches xmm */
+	{".....hi_ymm_xmm", 0x6, dirty_hi_ymm_xmm},
+	{".....hi_ymm_x87", 0x7, dirty_hi_ymm_x87},
+	{"...all_data_reg", 0x7, dirty_all_data_reg},
+	{".hi_ymm_xmm_x87", 0x7, dirty_hi_ymm_xmm_x87},
+};
 
-int setup(int core);
-void enable_speed_step(int cpu, int on);
+/* Measures the costs of xsave / xsaveopt during a restore-dirty-save cycle.
+ *
+ * opt controls whether we use xsaveopt or just xsave.
+ *
+ * clean controls whether we start an iteration with an all clean (initialized)
+ * or all in-use state.  This ends up being the *rest* of the state that isn't
+ * clobbered by dirty() that gets xsaved.  Clean shouldn't matter, according to
+ * the SDM, since if it wasn't modified, xsaveopt should ignore it.  Regardless,
+ * I see a difference for xmm based on 'clean' on some machines/OSs.
+ *
+ * This measures the effect of the 'modified' optimization, where xsaveopt
+ * would only save regions that were modified since the last rstror, so long as
+ * the 4-tuple of {cpl, vmx, xsave_linear_addr, xcomp_bv} hasn't changed. */
+static void test_xsave(struct dirty_test *dt, bool opt, bool clean)
+{
+	uint64_t start;
+
+	for (int i = 0; i < nr_iters; i++) {
+		if (clean)
+			initialize_as(&as);
+		else
+			full_dirty_as(&as);
+		__builtin_ia32_xrstor64(&as, mask);
+		dt->dirty();
+		start = start_timing();
+		if (opt)
+			__builtin_ia32_xsaveopt64(&as, mask);
+		else
+			__builtin_ia32_xsave64(&as, mask);
+		save_res[i] = stop_timing(start);
+	}
+
+	for (int i = 0; i < nr_iters; i++)
+		fprintf(outfile, "%sXSAVE%s %s %llu\n",
+		        clean ? "CLEAN_" : "", opt ? "OPT" : "", dt->name, save_res[i]);
+}
+
+enum {
+	XRSTOR_CMD_CLEAN,
+	XRSTOR_CMD_DIRTY,
+	XRSTOR_CMD_NOOP,
+};
+
+/* This tests XRSTOR's speed to restore a context of varying dirtiness.  For
+ * initialized FP states (an xstate_bv bit is clear), the processor should just
+ * e.g. set the registers to 0 (etc), and not read from memory.
+ *
+ * The SDM doesn't say if the *current* FPU state matters for restore.  It could
+ * be clean, fully dirty, a variety of dirtiness, etc.  cmd controls a few of
+ * these options.
+ *
+ * Possibly if the FPU is already clean, the processor knows that and doesn't
+ * even bother zeroing the registers.  Or it could use the XINUSE / modified
+ * optimization info. */
+static void test_xrstor(struct dirty_test *dt, int cmd)
+{
+	uint64_t start;
+	char *title = NULL;
+
+	reset_fp();
+	dt->dirty();
+	__builtin_ia32_xsaveopt64(&as, mask);
+
+	for (int i = 0; i < nr_iters; i++) {
+		switch (cmd) {
+		case XRSTOR_CMD_CLEAN:
+			reset_fp();
+			break;
+		case XRSTOR_CMD_DIRTY:
+			dirty_all_data_reg();
+			break;
+		}
+		start = start_timing();
+		__builtin_ia32_xrstor64(&as, mask);
+		save_res[i] = stop_timing(start);
+	}
+
+	switch (cmd) {
+	case XRSTOR_CMD_CLEAN:
+		title = "CLEAN";
+		break;
+	case XRSTOR_CMD_DIRTY:
+		title = "DIRTY";
+		break;
+	case XRSTOR_CMD_NOOP:
+		title = "NOOP_";
+		break;
+	}
+	for (int i = 0; i < nr_iters; i++)
+		fprintf(outfile, "%s_XRSTOR %s %llu\n", title, dt->name, save_res[i]);
+}
+
+/* Measures XRSTOR speed for restoring a context when the *current FPU* has been
+ * dirtied in various ways.
+ *
+ * This attempts to see if XRSTOR does anything with the 'modified'
+ * optimizization.  The SDM does not suggest this happens.  For instance, if we
+ * just saved a fully dirty FP state, and then do not dirty the processor state,
+ * can the XRSTOR skip reloading the registers from memory?  Or if it just
+ * restored, then restored again, does it realize nothing changed?
+ *
+ * 'presave' controls whether or not we do a save right before the dirty.  This
+ * checks if xsave has any interaction with these optimizations.  From what I've
+ * seen, it makes no difference on my machine.  But that's why we test.
+ *
+ * The context we're restoring can be fully dirty or fully clean.  This test is
+ * sort of the inverse of test_xrstor().  There, the initial state was
+ * controlled by the dirty_test, and the intermediate op was clean/dirty/noop.
+ * This test's initial state is clean/dirty, and the intermediate op is
+ * controlled by dirty_test.  Following this to the extreme, we'd have
+ * dirty_test * dirty_test combinations - these two tests are easier to deal
+ * with. */
+static void test_xrstor_alt(struct dirty_test *dt, bool clean, bool presave)
+{
+	uint64_t start;
+
+	if (clean)
+		reset_fp();
+	else
+		dirty_all_data_reg();
+	__builtin_ia32_xsaveopt64(&as, mask);
+
+	for (int i = 0; i < nr_iters; i++) {
+		if (presave)
+			__builtin_ia32_xsaveopt64(&as, mask);
+		dt->dirty();
+		start = start_timing();
+		__builtin_ia32_xrstor64(&as, mask);
+		save_res[i] = stop_timing(start);
+	}
+
+	for (int i = 0; i < nr_iters; i++)
+		fprintf(outfile, "%s_%sXRSTOR %s %llu\n", clean ? "CLEAN" : "DIRTY",
+		        presave ? "PRESAVE" : "", dt->name, save_res[i]);
+}
+
+/* Tests whether XSAVE does the init optimization: omit saving components in
+ * their initial state.  We'll vary which components are in their init state
+ * with dirty().
+ *
+ * opt controls whether or not we use XSAVEOPT.
+ *
+ * The tricky thing is that we need to not hit the modified optimization, which
+ * is when we save to the same place we just restored from. */
+static void test_init_xsave(struct dirty_test *dt, bool opt)
+{
+	uint64_t start;
+
+	for (int i = 0; i < nr_iters; i++) {
+		/* This also does an rstor, but it is from a different address than
+		 * where we save later.  That means the modified optimization won't
+		 * happen. */
+		reset_fp();
+		dt->dirty();
+		start = start_timing();
+		if (opt)
+			__builtin_ia32_xsaveopt64(&alt_as, mask);
+		else
+			__builtin_ia32_xsave64(&alt_as, mask);
+		save_res[i] = stop_timing(start);
+	}
+
+	for (int i = 0; i < nr_iters; i++)
+		fprintf(outfile, "INIT_XSAVE%s %s %llu\n", opt ? "OPT" : "",
+		        dt->name, save_res[i]);
+}
+
+enum {
+	XSAVE,
+	XRSTOR,
+	XRSTOR_ALT,
+	INIT_XSAVE,
+};
+
+static const char * const main_tests[] = {
+	[XSAVE] = "XSAVE",
+	[XRSTOR] = "XRSTOR",
+	[XRSTOR_ALT] = "XRSTOR_ALT",
+	[INIT_XSAVE] = "INIT_XSAVE",
+};
+
+static int get_test_id(const char *name)
+{
+	for (int i = 0; i < sizeof(main_tests) / sizeof(main_tests[0]); i++)
+		if (!strcmp(main_tests[i], name))
+			return i;
+	return -1;
+}
+
+/* Given an initially clean FPU on the processor, xsave should only save the
+ * parts we think dirty() touched.  We can see those in xstatebv. */
+static void assert_clobbers(void)
+{
+	struct dirty_test *dt;
+
+	for (int i = 0; i < sizeof(dirty_tests) / sizeof(dirty_tests[0]); i++) {
+		dt = &dirty_tests[i];
+		reset_fp();
+		dt->dirty();
+		__builtin_ia32_xsaveopt64(&as, 0x7);
+		if (as.xstate_bv != dt->clobbered_xstatebv) {
+			fprintf(stderr,
+					"Test %s had unexpected clobbers: xstate_bv was %p, expected %p\n",
+					dt->name, as.xstate_bv, dt->clobbered_xstatebv);
+			exit(-1);
+		}
+	}
+}
 
 int main(int argc, char *argv[])
 {
@@ -604,10 +574,14 @@ int main(int argc, char *argv[])
 	    {"samples", required_argument, 0, 's'},
 	    {"savemask", required_argument, 0, 'm'},
 	    {"core", required_argument, 0, 'c'},
+	    {"outfile", required_argument, 0, 'o'},
+	    {"test", required_argument, 0, 't'},
 	    {0, 0, 0, 0}};
-
 	int long_index = 0;
-	while ((opt = getopt_long(argc, argv, "c:s:m:", long_options,
+	time_t now;
+	int test_id = XSAVE;
+
+	while ((opt = getopt_long(argc, argv, "c:s:m:o:t:", long_options,
 	                          &long_index)) != -1) {
 		switch (opt) {
 		case 'c':
@@ -617,7 +591,22 @@ int main(int argc, char *argv[])
 			mask = strtol(optarg, 0, 0);
 			break;
 		case 's':
-			n = atoi(optarg);
+			nr_iters = atoi(optarg);
+			break;
+		case 'o':
+			outfile_name = optarg;
+			break;
+		case 't':
+			test_id = get_test_id(optarg);
+			if (test_id < 0) {
+				fprintf(stderr, "Unknown test '%s'.  Try:\n", optarg);
+				for (int i = 0;
+				     i < sizeof(main_tests) / sizeof(main_tests[0]);
+				     i++) {
+					fprintf(stderr, "\t%s\n", main_tests[i]);
+				}
+				exit(1);
+			}
 			break;
 		default:
 			fprintf(stderr, "Usage: %s [-m savemask] [-s numsamples]\n",
@@ -625,36 +614,73 @@ int main(int argc, char *argv[])
 			exit(1);
 		}
 	}
+	assert((mask & rxcr0()) == mask);
 
 	if (setup(core) < 0) {
 		perror("setup");
 		exit(1);
 	}
 	enable_speed_step(core, 0);
-	save_res = malloc(n * sizeof(uint64_t));
-	rstor_res = malloc(n * sizeof(uint64_t));
+	save_res = malloc(nr_iters * sizeof(uint64_t));
+	set_cpuinfo();
+	rd_overhead = compute_rd_overhead();
 
-	// Set up a default extended state that we can use for resets
-	// hexdump("At start", &default_as, sizeof(default_as));
-	asm volatile("fninit");
-	__builtin_ia32_xsave64(&default_as, 1);
-	// hexdump("fninit and xsave", &default_as, sizeof(default_as));
-
-	default_as.fp_head_64d.mxcsr = 0x1f80;
-
-	// TODO: According to Agner, Intel has a performance
-	// counter called "core clock cycles", that is apparently
-	// the most accurate measure... should take a look at this.
-	printf("# gnuplot> set xtic rotate\n");
-	printf("# plot \"whateverfileyoudid>to\" using 1:2:xtic(3)\n");
-
-	baseline("noFPU", "", 0, nodirty, 1);
-	for (i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) {
-		programtest(tests[i].name, "", tests[i].index, tests[i].dirty, 1);
-		programtest(tests[i].name, "opt", tests[i].index + 25, tests[i].dirty,
-		            2);
+	outfile = fopen(outfile_name, "w");
+	if (!outfile) {
+		perror("opening outfile");
+		exit(-1);
 	}
-	printf("# PLEASE NOTE!: I'm not sure if my method here marks just YMM or "
-	       "both YMM and XMM as XINUSE!\n");
+	fprintf(stderr, "Outputting to %s\n", outfile_name);
+
+	fprintf(outfile, "# title: %s %s Costs\n", os_name(), main_tests[test_id]);
+	fprintf(outfile, "# machine: %s %d, %d, %d (F, M, S)\n", vendor, family,
+	        model, stepping);
+	now = time(NULL);
+	fprintf(outfile, "# date: %s\n", ctime(&now));
+
+	/* Set up an initialized state that we can use for resets.  Importantly,
+	 * this has the xstate_bv[] bits set to 0. */
+	memset(&init_as, 0, sizeof(struct ancillary_state));
+	init_as.fp_head_64d.mxcsr = 0x1f80;
+
+	/* Set up a fully-dirty ancillary state. */
+	dirty_all_data_reg();
+	__builtin_ia32_xsaveopt64(&dirty_as, 7);
+
+	assert_clobbers();
+
+	/* Prime it.  (not sure if this is necessary or not) */
+	reset_fp();
+	__builtin_ia32_xsaveopt64(&as, mask);
+	__builtin_ia32_xsave64(&as, mask);
+	__builtin_ia32_xrstor64(&as, mask);
+
+	for (i = 0; i < sizeof(dirty_tests) / sizeof(dirty_tests[0]); i++) {
+		switch (test_id) {
+		case XSAVE:
+			test_xsave(&dirty_tests[i], false, false);
+			test_xsave(&dirty_tests[i], true,  false);
+			test_xsave(&dirty_tests[i], false, true);
+			test_xsave(&dirty_tests[i], true,  true);
+			break;
+		case XRSTOR:
+			test_xrstor(&dirty_tests[i], XRSTOR_CMD_NOOP);
+			test_xrstor(&dirty_tests[i], XRSTOR_CMD_CLEAN);
+			test_xrstor(&dirty_tests[i], XRSTOR_CMD_DIRTY);
+			break;
+		case XRSTOR_ALT:
+			test_xrstor_alt(&dirty_tests[i], false, false);
+			test_xrstor_alt(&dirty_tests[i], true,  false);
+			test_xrstor_alt(&dirty_tests[i], false, true);
+			test_xrstor_alt(&dirty_tests[i], true,  true);
+			break;
+		case INIT_XSAVE:
+			test_init_xsave(&dirty_tests[i], false);
+			test_init_xsave(&dirty_tests[i], true);
+			break;
+		}
+	}
+
+	fclose(outfile);
 	return 0;
 }
